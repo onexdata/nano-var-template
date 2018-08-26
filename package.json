@@ -1,0 +1,30 @@
+{
+  "name": "nano-var-template",
+  "version": "1.0.0",
+  "description": "The smallest *safe* variable template engine for Javascript",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/onexdata/nano-var-template.git"
+  },
+  "keywords": [
+    "template",
+    "engine",
+    "variable",
+    "ES6",
+    "backticks",
+    "injection",
+    "inject",
+    "vars",
+    "variables"
+  ],
+  "author": "NIck Steele <njsteele@gmail.com>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/onexdata/nano-var-template/issues"
+  },
+  "homepage": "https://github.com/onexdata/nano-var-template#readme"
+}
