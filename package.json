@@ -1,6 +1,6 @@
 {
   "name": "nano-var-template",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "The smallest and most robust *safe* variable template engine for Javascript",
   "main": "index.js",
   "scripts": {
