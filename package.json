@@ -1,7 +1,7 @@
 {
   "name": "nano-var-template",
-  "version": "1.0.0",
-  "description": "The smallest *safe* variable template engine for Javascript",
+  "version": "2.0.0",
+  "description": "The smallest and most robust *safe* variable template engine for Javascript",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -19,7 +19,13 @@
     "injection",
     "inject",
     "vars",
-    "variables"
+    "variables",
+    "functions",
+    "userland",
+    "safe",
+    "scrubbed",
+    "XSS",
+    "strategy"
   ],
   "author": "NIck Steele <njsteele@gmail.com>",
   "license": "MIT",
