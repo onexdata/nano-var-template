@@ -91,7 +91,7 @@ Output: Hello Jane Doe!
 
 ### Parse variables, plugins (like wordPress shortcodes), and users in messages by just using different settings...
 ```
-import Tpl from "./template"
+const Tpl = require('nano-var-template')
 var varTpl = Tpl()
 var userTpl = Tpl( {start: '@{', end: '}')
 var pluginTpl = Tpl( {start: '#{', end: '}', functions: true} )
@@ -135,12 +135,14 @@ var users = {
 var tpl = pluginTpl(userTpl(varTpl(msg, data), users), plugins)
 
 
-console.log(processdMsg) // Out to console, or...
+console.log(tpl) // Out to console, or...
 
-document.write(processedMsg) // Out to browser (showing avatar, highlighting, etc.)
+document.write(tpl) // Out to browser (showing avatar, highlighting, etc.)
 ```
 
 ```
+Output:
+
 Hi Jane Doe, Administrator! Here is your avatar: <avatar :id='default' />. Your first name is Jane and your last name is Doe Here is the response of a special plugin for you: What your function returns (this string) is what gets injected.
 ```
 
@@ -148,11 +150,11 @@ Hi Jane Doe, Administrator! Here is your avatar: <avatar :id='default' />. Your 
 ### Make a mistake and get easy to understand debug errors
 ```
 const tpl = require('nano-var-template')()
-console.log(tpl("Hello {user.name}!", {user: "Jane Doe"}))
+console.log(tpl("Hello ${user.name}!", {user: "Jane Doe"}))
 ```
 
 ```
-Output: Error: nano-var-template: 'name' missing in {user.name}
+Output: Error: nano-var-template: 'name' missing in ${user.name}
 ```
 
 ### Options you can modify (showing defaults)
@@ -169,11 +171,12 @@ const tpl = new Tpl( {options} )
 
 ```
 
-Here are the 4 options you can currently define...
+Here are the options you can currently define...
 ```
 {
   start: '{', // Place the start of the variable match here (can be any number of chars).
   end: '}',   // Place the end of the variable match here.
+  functions: true // Set to true if you will be using a functor (object of functions) instead of a data object
   path: '[a-z0-9_$][\\.a-z0-9_]*', // Regular expression for allowed paths.  If you don't want to allow certain variables for example, or limit paths, do it here.
   warn: true  // By default, will throw an error warning you if you try to reference a variable not passed. Set this to false to just skip the missing variable silently.
 }
