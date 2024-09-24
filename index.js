@@ -4,7 +4,7 @@ const Tpl = options => {
     {
       start: options && options.functions
       ? "#{"
-      : "${",
+      : "\\${",
       end: "}",
       path:
         options && options.functions
