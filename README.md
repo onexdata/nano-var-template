@@ -38,7 +38,7 @@ yarn add nano-var-template
 ### Basic
 ```
 const tpl = require('nano-var-template')()
-console.log(tpl("Hello {user}!", {user: "Jane Doe"}))
+console.log(tpl("Hello ${user}!", {user: "Jane Doe"}))
 ```
 
 ```
