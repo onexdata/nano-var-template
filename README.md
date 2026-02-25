@@ -1,183 +1,215 @@
 # nano-var-template
-The smallest safe variable template engine that includes a functor strategy pattern.  This is done without eval / new function / injecting ES6 backticks or other things you can't expose in userland.
 
-This engine even (optionally) throws descriptive errors if you type a variable path wrong.  Catch or route them as you see fit.
+The smallest safe variable template engine with N-pass composition.
 
-Designed specifically for userland.  Let your users define i18n strings, call out your users, reference documents, invoke plugins etc. without worry that they'll hack you by including javascript or HTML.
+No `eval`. No `new Function`. No ES6 backtick injection. Just `String.replace()` with a configurable regex — safe for userland input.
 
-Just strip HTML / JavaScript like you normally would, and use plugins to allow your users the exact power they need! :)
+## Why this exists
 
-* Supports full paths in variables, not just shallow variables. i.e. user.data.name.first works.
-* Supports calling functions as plugins using a simple strategy pattern (make an object of named functions, example toward bottom).
-* Default variables are injected inside ${} (but you can modify this)
-* Default functions are injected inside #{} (but you can modify this)
+Most template engines are single-pass: they take a template and a data object and produce output. nano-var-template is a **composable pipeline**. You create multiple instances with different delimiters, and pipe the output of one into the next. Each pass resolves its own markers and leaves everything else untouched.
 
-# Only 1.24kb uncompressed source, including comments.
-# Only 621 bytes gzipped.
-# Only 372 bytes minified/gzipped (!!!)
+This gives you layered abstraction:
 
-This is written in ES6 for Node and modern tools like Webpack.  The code is small, understandable and simple, feel free to refactor it for the browser or back to ES5 for IE11 / etc. if you aren't using Babel / Webpack.
+```
+Pass 1  ${}   Raw data         →  ${user.name}  →  "Jane"
+Pass 2  #{}   Functions        →  #{avatar:jane.png}  →  "<img src='jane.png' />"
+Pass 3  @{}   User references  →  @{42}  →  "Jane Doe, Admin"
+Pass N  ~{}   Whatever you need next
+```
 
-Pull requests are always welcome.
+Each pass's output can contain markers for subsequent passes, but never for prior ones. That's a directed pipeline — easy to reason about, easy to debug (inspect the string between passes), and it costs almost nothing to add another pass.
 
+**This is the core idea.** The package is small because it's finished, not because it's trivial.
 
-## Install:
+## Install
 
-NPM
 ```
 npm install nano-var-template
 ```
 
-Yarn
-```
-yarn add nano-var-template
-```
+## Quick start
 
-## Usage:
-
-### Basic
-```
-const tpl = require('nano-var-template')()
-console.log(tpl("Hello ${user}!", {user: "Jane Doe"}))
-```
-
-```
-Output: Hello Jane Doe!
-```
-
-### More practical
-```
+```js
 const tpl = require('nano-var-template')()
 
-let template = "Welcome to ${app}. You are ${person.name.first} ${person.name.last}!"
-
-let data = {
-        app: "Super App",
-        person: {
-            name: {
-              first: "Jane",
-              last: "Doe"
-            }
-        }
-    }
-    
-console.log(tpl(template, data))
+tpl("Hello ${name}!", { name: "Jane" })
+// → "Hello Jane!"
 ```
 
-```
-Output: Welcome to Super App. You are Jane Doe!
-```
+## Variable substitution
 
-### Change defaults to make it feel like Vue/Angular/etc.
-```
-const tpl = require('nano-var-template')( {start: '{{', end: '}}'} )
-console.log(tpl("Hello {{user}}!", {user: "Jane Doe"}))
-```
+Supports full nested paths:
 
-```
-Output: Hello Jane Doe!
-```
+```js
+const tpl = require('nano-var-template')()
 
-### Do something custom...
-```
-const tpl = require('nano-var-template')( {start: '@#[', end: ']#'} )
-console.log(tpl("Hello @#[user]#!", {user: "Jane Doe"}))
-```
+const template = "Welcome to ${app}. You are ${person.name.first} ${person.name.last}!"
 
-```
-Output: Hello Jane Doe!
-```
-
-
-### Parse variables, plugins (like wordPress shortcodes), and users in messages by just using different settings...
-```
-const Tpl = require('nano-var-template')
-var varTpl = Tpl()
-var userTpl = Tpl( {start: '@{', end: '}')
-var pluginTpl = Tpl( {start: '#{', end: '}', functions: true} )
-
-// Yes, you can pipe the output of one template (i.e. variables) into another (ie.e plugins) as many levels deep as you need...
-var msg = "Hi @{${user.id}}! Here is your avatar: #{avatar:${user.settings.avatar}}. Your first name is ${user.name.first} and your last name is ${user.name.last} Here is the response of a special plugin for you: #{foo}"
-var data = {
-        app: "Super App",
-        user: {
-             id: '123',
-            name: {
-              first: "Jane",
-              last: "Doe"
-            },
-            settings: {
-              avatar: 'default'
-            }
-
-        }
-    };
-var plugins = {
-  avatar: (id) => "<avatar :id='" +id + "' />",
-  foo: () => { return "What your function returns (this string) is what gets injected." },
-  example: (vars) => {
-    // Functions can be as complex as you need. Any JavaScript function works.
-    // It will recieve anything after a ":" by default as it's variables. But you can change this too by setting your own regex path.
-    // Try this example like this:
-    // #{example} - returns "Got nothing"
-    // #{example:test} - returns "Got 'test'"
-    // #{example:test, another test, more vars, a string, 123} - returns "Got 'test, another test, more vars, a string, 123'"
-    
-    if (vars) return `Got ${vars}`
-    return "Got nothing"
-
-    // You can split up your vars passed to your functions like this: vars.split(",") // Note: replace "," with any delimiter you want!
+const data = {
+  app: "Super App",
+  person: {
+    name: { first: "Jane", last: "Doe" }
   }
 }
-var users = {
-  123: 'Jane Doe, Administrator'
+
+tpl(template, data)
+// → "Welcome to Super App. You are Jane Doe!"
+```
+
+## Custom delimiters
+
+```js
+// Vue/Angular style
+const tpl = require('nano-var-template')({ start: '{{', end: '}}' })
+tpl("Hello {{name}}!", { name: "Jane" })
+// → "Hello Jane!"
+
+// Anything you want
+const tpl2 = require('nano-var-template')({ start: '@#[', end: ']#' })
+tpl2("Hello @#[name]#!", { name: "Jane" })
+// → "Hello Jane!"
+```
+
+## Functions (plugins)
+
+Enable function mode to call named functions from templates. Everything after `:` is passed as the argument string:
+
+```js
+const tpl = require('nano-var-template')({ functions: true })
+
+const plugins = {
+  upper: s => s.toUpperCase(),
+  greet: name => `Welcome, ${name}!`,
+  badge: type => `<span class="badge badge-${type}">${type}</span>`
 }
-var tpl = pluginTpl(userTpl(varTpl(msg, data), users), plugins)
 
+tpl("#{upper:hello}", plugins)
+// → "HELLO"
 
-console.log(tpl) // Out to console, or...
+tpl("#{greet:Jane}", plugins)
+// → "Welcome, Jane!"
 
-document.write(tpl) // Out to browser (showing avatar, highlighting, etc.)
+tpl("#{badge:admin}", plugins)
+// → '<span class="badge badge-admin">admin</span>'
 ```
 
-```
-Output:
+Functions can be as complex as you need — any JavaScript function works. Split multiple arguments yourself:
 
-Hi Jane Doe, Administrator! Here is your avatar: <avatar :id='default' />. Your first name is Jane and your last name is Doe Here is the response of a special plugin for you: What your function returns (this string) is what gets injected.
-```
-
-
-### Make a mistake and get easy to understand debug errors
-```
-const tpl = require('nano-var-template')()
-console.log(tpl("Hello ${user.name}!", {user: "Jane Doe"}))
-```
-
-```
-Output: Error: nano-var-template: 'name' missing in ${user.name}
+```js
+const plugins = {
+  link: args => {
+    const [url, text] = args.split(',')
+    return `<a href="${url.trim()}">${text.trim()}</a>`
+  }
+}
+tpl("#{link:https://example.com, Click here}", plugins)
+// → '<a href="https://example.com">Click here</a>'
 ```
 
-### Options you can modify (showing defaults)
-You can set options when you require the module by simply placing options in the parens when requiring like this:
-```
-const tpl = require('nano-var-template')( {options})
+## N-pass composition
 
-```
+This is the architectural pattern that makes nano-var-template more than a string replacer. Create multiple instances with different delimiters and pipe them together:
 
-Or if you prefer, you can do it separately...
-```
+### Two-pass: variables then functions
+
+```js
 const Tpl = require('nano-var-template')
-const tpl = new Tpl( {options} )
+const varTpl = Tpl()
+const fnTpl = Tpl({ functions: true })
 
+const template = "Hello #{greet:${name}}!"
+const data = { name: "Jane" }
+const plugins = { greet: name => `Welcome, ${name}` }
+
+// Pass 1: resolve ${} variables
+const pass1 = varTpl(template, data)
+// → "Hello #{greet:Jane}!"
+
+// Pass 2: resolve #{} functions (now with resolved data)
+const pass2 = fnTpl(pass1, plugins)
+// → "Hello Welcome, Jane!"
 ```
 
-Here are the options you can currently define...
+### Three-pass: variables, functions, and user references
+
+```js
+const Tpl = require('nano-var-template')
+const varTpl = Tpl()
+const fnTpl = Tpl({ functions: true })
+const userTpl = Tpl({ start: '@{', end: '}' })
+
+const template = "Hi @{${user.id}}! Avatar: #{avatar:${user.avatar}}"
+
+const data = { user: { id: '42', avatar: 'cat.png' } }
+const users = { 42: 'Jane Doe' }
+const plugins = { avatar: src => `<img src="${src}" />` }
+
+const result = userTpl(fnTpl(varTpl(template, data), plugins), users)
+// → 'Hi Jane Doe! Avatar: <img src="cat.png" />'
 ```
-{
-  start: '{', // Place the start of the variable match here (can be any number of chars).
-  end: '}',   // Place the end of the variable match here.
-  functions: true // Set to true if you will be using a functor (object of functions) instead of a data object
-  path: '[a-z0-9_$][\\.a-z0-9_]*', // Regular expression for allowed paths.  If you don't want to allow certain variables for example, or limit paths, do it here.
-  warn: true  // By default, will throw an error warning you if you try to reference a variable not passed. Set this to false to just skip the missing variable silently.
-}
+
+### N-pass: as many layers as you need
+
+Each pass is the same ~10-line function with a different delimiter. Adding a 4th, 5th, or Nth pass costs essentially nothing. The only rule: **choose delimiters for each pass so that output from one pass doesn't accidentally contain markers for a later pass.** For example, if a function produces output containing `}`, use `]` or `)` as the closing delimiter for subsequent passes.
+
+```js
+const Tpl = require('nano-var-template')
+const dataTpl = Tpl()                                            // ${}
+const tagTpl = Tpl({ functions: true })                          // #{}
+const wrapTpl = Tpl({ start: '@{', end: '}', functions: true })  // @{}
+const frameTpl = Tpl({ start: '~(', end: ')' })                  // ~()
+
+const template = "~(before)@{wrap:#{tag:${word}}}~(after)"
+
+let result = template
+result = dataTpl(result, { word: "hello" })       // → "~(before)@{wrap:#{tag:hello}}~(after)"
+result = tagTpl(result, { tag: w => w.toUpperCase() }) // → "~(before)@{wrap:HELLO}~(after)"
+result = wrapTpl(result, { wrap: s => `[${s}]` })      // → "~(before)[HELLO]~(after)"
+result = frameTpl(result, { before: ">>>", after: "<<<" }) // → ">>>[HELLO]<<<"
 ```
+
+## Error handling
+
+By default, missing variables throw descriptive errors:
+
+```js
+const tpl = require('nano-var-template')()
+
+tpl("Hello ${user.name}!", { user: {} })
+// throws: "nano-var-template: 'name' missing in ${user.name}"
+```
+
+Set `warn: false` to silently leave unresolved tokens in place:
+
+```js
+const tpl = require('nano-var-template')({ warn: false })
+
+tpl("Hello ${name}!", {})
+// → "Hello ${name}!"
+```
+
+## Options
+
+```js
+const tpl = require('nano-var-template')({
+  start: '${',    // Opening delimiter (any string)
+  end: '}',       // Closing delimiter (any string)
+  functions: false, // true = function mode (data object contains functions, not values)
+  path: '[a-z0-9_$][\\.a-z0-9_]*',  // Regex for allowed variable paths
+  warn: true       // true = throw on missing variables, false = leave token unchanged
+})
+```
+
+## Design notes
+
+**Why is this package so small?** Because it's a single, well-defined operation: regex match → path lookup → replace. There's nothing to add. The power comes from composing multiple instances, not from framework complexity.
+
+**Why N-pass instead of one big template engine?** Single-pass engines need to eagerly compute every possible variable upfront. N-pass composition is lazy — each pass only evaluates what the template actually uses. New functions don't bloat existing templates. Template authors compose building blocks without understanding the internals.
+
+**Is this the same idea as Unix pipes?** Yes. Each pass is a filter that transforms the string and passes it along. Same principle as compiler passes, middleware chains, and stream pipelines. The difference is that each filter ignores delimiters it doesn't own.
+
+**Delimiter design:** When piping passes together, choose delimiters so that output from one pass can't accidentally contain markers for a later pass. For example, if your functions produce HTML containing `}`, don't use `}` as the closing delimiter for subsequent passes — use `]`, `)`, or a multi-character sequence like `]]` instead.
+
+## License
+
+MIT
