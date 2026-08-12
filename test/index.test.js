@@ -245,6 +245,28 @@ describe("function mode", () => {
     const plugins = { greet: () => "Hi" }
     assert.equal(tpl2("@{greet}", plugins), "Hi")
   })
+
+  it("only splits on the first ':' - later colons stay in the argument", () => {
+    const plugins = { echo: s => s }
+    assert.equal(tpl("#{echo:a:b:c}", plugins), "a:b:c")
+  })
+
+  it("accepts arguments with URL-safe characters (/, -, ?, =, &)", () => {
+    const plugins = {
+      link: args => {
+        const [url, text] = args.split(", ")
+        return `<a href="${url}">${text}</a>`
+      }
+    }
+    assert.equal(
+      tpl("#{link:https://example.com/a-b?x=1&y=2, Click here}", plugins),
+      '<a href="https://example.com/a-b?x=1&y=2">Click here</a>'
+    )
+  })
+
+  it("does not treat inherited Object.prototype members as callable functions", () => {
+    assert.throws(() => tpl("#{constructor}", {}), /Missing function/)
+  })
 })
 
 // ─── Multi-pass composition (the core architectural pattern) ────────────────
@@ -292,10 +314,6 @@ describe("multi-pass composition", () => {
 
   it("four-pass: data → components → layout → final", () => {
     // Four passes with simple string values to demonstrate N-pass depth.
-    // Note: function arguments are constrained by the path regex, so each
-    // pass that uses functions should receive simple alphanumeric args.
-    // The final assembly into complex output (HTML etc.) happens at the
-    // last function pass, or via variable passes which have no such limit.
     const dataTpl = Tpl()                                          // pass 1: ${}
     const tagTpl = Tpl({ functions: true })                        // pass 2: #{}
     const wrapTpl = Tpl({ start: "@{", end: "}", functions: true })// pass 3: @{}
@@ -365,6 +383,11 @@ describe("edge cases", () => {
     assert.equal(tpl("${$special}", { $special: "yes" }), "yes")
   })
 
+  it("does not resolve inherited Object.prototype members", () => {
+    assert.throws(() => tpl("${constructor}", {}), /constructor.*missing/)
+    assert.throws(() => tpl("${__proto__}", {}), /__proto__.*missing/)
+  })
+
   it("does not match empty delimiters", () => {
     // ${} has no valid path inside — regex requires at least one char
     assert.equal(tpl("${}", {}), "${}")
@@ -421,10 +444,14 @@ describe("instance isolation", () => {
 describe("error messages", () => {
   const tpl = Tpl()
 
+  it("throws real Error instances, not strings", () => {
+    assert.throws(() => tpl("${missing}", {}), err => err instanceof Error)
+  })
+
   it("includes the variable path in the error", () => {
     assert.throws(
       () => tpl("${user.name}", { user: {} }),
-      err => err.includes("name") && err.includes("${user.name}")
+      err => err.message.includes("name") && err.message.includes("${user.name}")
     )
   })
 
@@ -432,7 +459,7 @@ describe("error messages", () => {
     const fnTpl = Tpl({ functions: true })
     assert.throws(
       () => fnTpl("#{nope}", {}),
-      err => err.includes("Missing function")
+      err => err.message.includes("Missing function")
     )
   })
 })

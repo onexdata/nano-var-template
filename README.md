@@ -160,6 +160,8 @@ const wrapTpl = Tpl({ start: '@{', end: '}', functions: true })  // @{}
 const frameTpl = Tpl({ start: '~(', end: ')' })                  // ~()
 
 const template = "~(before)@{wrap:#{tag:${word}}}~(after)"
+// Function arguments can contain any characters (URLs, punctuation, etc.) -
+// they just can't contain the *next* pass's own delimiters, per the rule below.
 
 let result = template
 result = dataTpl(result, { word: "hello" })       // → "~(before)@{wrap:#{tag:hello}}~(after)"
@@ -187,6 +189,10 @@ const tpl = require('nano-var-template')({ warn: false })
 tpl("Hello ${name}!", {})
 // → "Hello ${name}!"
 ```
+
+Errors are real `Error` instances (`err.message`, `err instanceof Error`), not strings.
+
+Only a data object's **own** properties are resolved — inherited `Object.prototype` members like `constructor`, `toString`, and `__proto__` are always treated as missing, even against `{}`. This keeps template authors from ever reading (or, in function mode, invoking) something the caller didn't explicitly put in the data object.
 
 ## Options
 
