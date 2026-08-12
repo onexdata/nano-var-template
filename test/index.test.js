@@ -269,6 +269,51 @@ describe("function mode", () => {
   })
 })
 
+// ─── Async plugin functions ─────────────────────────────────────────────────
+
+describe("async plugin functions", () => {
+  const tpl = Tpl({ functions: true })
+
+  it("returns a plain string when every plugin is synchronous", () => {
+    const result = tpl("#{greet:Jane}", { greet: n => `Hi ${n}` })
+    assert.equal(typeof result, "string")
+    assert.equal(result, "Hi Jane")
+  })
+
+  it("returns a Promise<string> when a plugin returns a Promise", async () => {
+    const result = tpl("Hello #{fetchName:1}!", {
+      fetchName: id => Promise.resolve(`Jane-${id}`)
+    })
+    assert.ok(result instanceof Promise)
+    assert.equal(await result, "Hello Jane-1!")
+  })
+
+  it("resolves multiple async plugins in the same template", async () => {
+    const result = tpl("#{a} #{b}", {
+      a: () => Promise.resolve("X"),
+      b: () => Promise.resolve("Y")
+    })
+    assert.equal(await result, "X Y")
+  })
+
+  it("mixes sync and async plugins in the same template", async () => {
+    const result = tpl("#{a} #{b}", {
+      a: () => "X",
+      b: () => Promise.resolve("Y")
+    })
+    assert.equal(await result, "X Y")
+  })
+
+  it("propagates a rejected plugin promise", async () => {
+    const result = tpl("#{fail}", { fail: () => Promise.reject(new Error("boom")) })
+    await assert.rejects(result, /boom/)
+  })
+
+  it("still throws synchronously for a missing function, even in an async template", () => {
+    assert.throws(() => tpl("#{nope}", { ok: () => Promise.resolve("x") }), /Missing function/)
+  })
+})
+
 // ─── Multi-pass composition (the core architectural pattern) ────────────────
 
 describe("multi-pass composition", () => {

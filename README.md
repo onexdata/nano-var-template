@@ -106,6 +106,26 @@ tpl("#{link:https://example.com, Click here}", plugins)
 // → '<a href="https://example.com">Click here</a>'
 ```
 
+### Async functions
+
+A plugin function can return a Promise — useful for i18n lookups, database reads, or any async work. When every function invoked by a template resolves synchronously, `tpl()` returns a plain `string`, exactly as before — nothing changes for existing sync-only usage. But if *any* invoked function returns a Promise, `tpl()` returns `Promise<string>` instead, resolving once every call has settled:
+
+```js
+const tpl = require('nano-var-template')({ functions: true })
+
+const plugins = {
+  userName: id => db.users.findById(id).then(u => u.name)
+}
+
+const result = tpl("Hi #{userName:42}!", plugins)
+// result is a Promise<string> here, because userName() returned one
+
+await result
+// → "Hi Jane Doe!"
+```
+
+Since you can't know in advance whether a given plugin set will resolve sync or async, treat the return value as possibly a Promise whenever any of your registered functions might be async: `await Promise.resolve(tpl(...))` works either way.
+
 ## N-pass composition
 
 This is the architectural pattern that makes nano-var-template more than a string replacer. Create multiple instances with different delimiters and pipe them together:

@@ -1,16 +1,29 @@
 {
   "name": "nano-var-template",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "The smallest and most robust *safe* variable template engine for Javascript",
+  "type": "commonjs",
   "main": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "require": "./index.js",
+      "import": "./index.js"
+    }
+  },
   "files": [
-    "index.js"
+    "index.js",
+    "index.d.ts",
+    "CHANGELOG.md"
   ],
   "engines": {
     "node": ">=18"
   },
   "scripts": {
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "typecheck": "tsc --noEmit --strict --target es2020 --module commonjs test/types.ts",
+    "lint": "eslint ."
   },
   "repository": {
     "type": "git",
@@ -38,5 +51,12 @@
   "bugs": {
     "url": "https://github.com/onexdata/nano-var-template/issues"
   },
-  "homepage": "https://github.com/onexdata/nano-var-template#readme"
+  "homepage": "https://github.com/onexdata/nano-var-template#readme",
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@stylistic/eslint-plugin": "^5.10.0",
+    "eslint": "^9.39.5",
+    "globals": "^17.11.0",
+    "typescript": "^7.0.2"
+  }
 }
