@@ -54,9 +54,9 @@
   },
   "homepage": "https://github.com/onexdata/nano-var-template#readme",
   "devDependencies": {
-    "@eslint/js": "^9.39.5",
+    "@eslint/js": "^10.0.0",
     "@stylistic/eslint-plugin": "^5.10.0",
-    "eslint": "^9.39.5",
+    "eslint": "^10.8.1",
     "globals": "^17.11.0",
     "typescript": "^7.0.2"
   }

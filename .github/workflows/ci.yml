@@ -13,41 +13,54 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Runtime compatibility: the engine itself on every supported Node.
   test:
     runs-on: ubuntu-latest
     strategy:
       matrix:
         node-version: [18.x, 20.x, 22.x, 24.x]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
       - run: npm ci
       - run: npm test
+
+  # Node-version-independent checks, run once on current LTS. Kept separate
+  # from the matrix because dev tooling (eslint 10+) does not support Node 18
+  # even though the shipped engine does.
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+          cache: npm
+      - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
       # index.d.ts must stay valid for consumers on older TypeScript, not just
       # the repo's own devDependency (TS 7 accepts declaration shapes TS 5
       # rejects, e.g. TS2309 - which shipped broken in 2.2.0).
       - run: npx -y -p typescript@5 tsc --noEmit --strict --target es2020 --module commonjs test/types.ts
-      # Coverage report in the job log (once per run, on current LTS)
-      - if: matrix.node-version == '24.x'
-        run: node --test --experimental-test-coverage test/*.test.js
+      # Coverage report in the job log
+      - run: node --test --experimental-test-coverage test/*.test.js
 
   publish:
-    needs: test
+    needs: [test, checks]
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 20.x
+          node-version: 24.x
           registry-url: https://registry.npmjs.org
 
       - name: Check whether package.json version is newer than published
