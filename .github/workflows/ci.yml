@@ -17,12 +17,13 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node-version: [18.x, 20.x, 22.x]
+        node-version: [18.x, 20.x, 22.x, 24.x]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
+          cache: npm
       - run: npm ci
       - run: npm test
       - run: npm run lint
@@ -31,6 +32,9 @@ jobs:
       # the repo's own devDependency (TS 7 accepts declaration shapes TS 5
       # rejects, e.g. TS2309 - which shipped broken in 2.2.0).
       - run: npx -y -p typescript@5 tsc --noEmit --strict --target es2020 --module commonjs test/types.ts
+      # Coverage report in the job log (once per run, on current LTS)
+      - if: matrix.node-version == '24.x'
+        run: node --test --experimental-test-coverage test/*.test.js
 
   publish:
     needs: test

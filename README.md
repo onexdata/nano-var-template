@@ -1,5 +1,8 @@
 # nano-var-template
 
+[![CI](https://github.com/onexdata/nano-var-template/actions/workflows/ci.yml/badge.svg)](https://github.com/onexdata/nano-var-template/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/nano-var-template)](https://www.npmjs.com/package/nano-var-template)
+
 The smallest safe variable template engine with N-pass composition.
 
 No `eval`. No `new Function`. No ES6 backtick injection. Just `String.replace()` with a configurable regex — safe for userland input.
@@ -112,6 +115,26 @@ contain is the closing delimiter itself: `#{parse:{"a":1}}` ends at the first
 `}`. If your arguments need `}`, give that pass a different closing delimiter
 (`)`, `]`, `]]`, ...) — the same rule as choosing delimiters between passes.
 
+### Namespaced plugins
+
+Dotted names walk the plugin object, so related plugins can live under one
+namespace. `this` is preserved, so methods can share state with their
+namespace:
+
+```js
+const tpl = require('nano-var-template')({ functions: true })
+
+const plugins = {
+  format: {
+    date: s => `DATE(${s})`,
+    money: s => `$${s}`
+  }
+}
+
+tpl("#{format.date:2026} costs #{format.money:5}", plugins)
+// → "DATE(2026) costs $5"
+```
+
 ### Async functions
 
 A plugin function can return a Promise — useful for i18n lookups, database reads, or any async work. When every function invoked by a template resolves synchronously, `tpl()` returns a plain `string`, exactly as before — nothing changes for existing sync-only usage. But if *any* invoked function returns a Promise, `tpl()` returns `Promise<string>` instead, resolving once every call has settled:
@@ -195,6 +218,27 @@ result = tagTpl(result, { tag: w => w.toUpperCase() }) // → "~(before)@{wrap:H
 result = wrapTpl(result, { wrap: s => `[${s}]` })      // → "~(before)[HELLO]~(after)"
 result = frameTpl(result, { before: ">>>", after: "<<<" }) // → ">>>[HELLO]<<<"
 ```
+
+## Escaping
+
+To output template syntax literally, put a backslash immediately before the
+start delimiter. Backslash pairs collapse (C-style parity), and backslashes
+anywhere else in a template are not special at all:
+
+```js
+const tpl = require('nano-var-template')()
+
+tpl("\\${name}", { name: "Jane" })      // → "${name}"     (literal, not substituted)
+tpl("\\\\${name}", { name: "Jane" })    // → "\\Jane"      (literal backslash + value)
+tpl("C:\\path ${name}", { name: "J" })  // → "C:\\path J"  (stray backslashes untouched)
+```
+
+(The doubled backslashes above are JavaScript string escapes — in a template
+*file* you'd write `\${name}` and `\\${name}`.)
+
+This works in both modes and with any custom delimiters: `\{{name}}`,
+`\#{fn:arg}`, etc. Escapes are consumed by the pass that owns that delimiter,
+so an escaped `${` survives to render as text even when later passes run.
 
 ## Error handling
 

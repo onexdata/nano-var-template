@@ -19,8 +19,13 @@ const Tpl = options => {
     },
     options
   )
+  // The two leading groups implement escaping: backslash PAIRS immediately
+  // before a start delimiter collapse to literal backslashes, and an odd
+  // remaining backslash suppresses the tag (renders it as literal text).
+  // Backslashes anywhere else in a template are not special at all.
   const match = new RegExp(
-    escapeRegex(options.start) + "\\s*(" + options.path + ")\\s*" + escapeRegex(options.end),
+    "((?:\\\\\\\\)*)(\\\\?)" +
+      escapeRegex(options.start) + "\\s*(" + options.path + ")\\s*" + escapeRegex(options.end),
     "gi"
   )
   // Function mode validates the name (the part before ':') against the same
@@ -31,7 +36,11 @@ const Tpl = options => {
       // Merge the passed data into the template string we're sending back...
       // (String.replace collects every match before invoking the callback,
       // so a callback that re-enters this instance can't corrupt the scan.)
-      return template.replace(match, (tag, token) => {
+      return template.replace(match, (tag, pairs, esc, token) => {
+        const prefix = "\\".repeat(pairs.length / 2)
+        // Odd backslash: the tag is escaped - render it literally, minus the
+        // escaping backslash (and with pairs collapsed).
+        if (esc) return prefix + tag.slice(pairs.length + esc.length)
         const path = token.split("."),
           len = path.length
         let lookup = data
@@ -48,8 +57,9 @@ const Tpl = options => {
             if (options.warn) throw new Error(`nano-var-template: '${path[i]}' missing in ${tag}`)
             return tag
           }
-          // Return the required value
-          if (i === len - 1) return lookup
+          // Return the required value (raw when there's no prefix, so String
+          // coercion happens exactly once, in replace itself)
+          if (i === len - 1) return prefix ? prefix + lookup : lookup
         }
       })
     }
@@ -60,6 +70,19 @@ const Tpl = options => {
     // state, so a plugin that re-enters this same instance is harmless.
     const startD = options.start,
       endD = options.end
+    // How many escape backslashes sit immediately before position i (capped
+    // at `floor` so backslashes already emitted are never counted twice).
+    const slashesBefore = (i, floor) => {
+      let b = 0
+      while (b < i - floor && template.charCodeAt(i - 1 - b) === 92) b++
+      return b
+    }
+    // The next start delimiter at or after `from` that is NOT escaped.
+    const nextOpener = from => {
+      let i = template.indexOf(startD, from)
+      while (i !== -1 && slashesBefore(i, from) & 1) i = template.indexOf(startD, i + startD.length)
+      return i
+    }
     const parts = []
     const calls = [] // { at: index into parts, name, arg, tag }
     let pos = 0
@@ -67,13 +90,21 @@ const Tpl = options => {
     for (;;) {
       const s = template.indexOf(startD, pos)
       if (s === -1) break
+      const b = slashesBefore(s, pos)
+      if (b & 1) {
+        // Escaped opener: emit it literally, minus the escaping backslash
+        // (and with backslash pairs collapsed), then keep scanning after it.
+        parts.push(template.slice(pos, s - b) + "\\".repeat((b - 1) / 2) + startD)
+        pos = s + startD.length
+        continue
+      }
       const from = s + startD.length
       if (end < from) end = template.indexOf(endD, from)
       if (end === -1) break
-      // Another opener before this tag closes means this opener is not a tag
-      // (unclosed, or nested like "#{a:x #{b:y} z"). Emit it as literal text
-      // and rescan from the inner opener, which may be a real tag.
-      const inner = template.indexOf(startD, from)
+      // An unescaped opener before this tag closes means this opener is not a
+      // tag (unclosed, or nested like "#{a:x #{b:y} z"). Emit it as literal
+      // text and rescan from the inner opener, which may be a real tag.
+      const inner = nextOpener(from)
       if (inner !== -1 && inner < end) {
         parts.push(template.slice(pos, inner))
         pos = inner
@@ -92,31 +123,44 @@ const Tpl = options => {
         continue
       }
       const tagEnd = end + endD.length
-      parts.push(template.slice(pos, s))
+      parts.push(template.slice(pos, s - b) + "\\".repeat(b / 2))
       calls.push({ at: parts.length, name, arg, tag: template.slice(s, tagEnd) })
       parts.push(null)
       pos = tagEnd
     }
     parts.push(template.slice(pos))
 
-    const callable = name =>
-      data != null && !banned(name) && name in Object(data) && typeof data[name] === "function"
+    // A dotted name walks the plugin object (namespaced plugins like
+    // #{format.date:...}), with the same guards as variable mode. Returns
+    // {fn, parent} so the call keeps its `this` (parent.method semantics).
+    const lookupFn = name => {
+      const seg = name.split(".")
+      let parent = null,
+        fn = data
+      for (let i = 0; i < seg.length; i++) {
+        if (fn == null || banned(seg[i]) || !(seg[i] in Object(fn))) return null
+        parent = fn
+        fn = fn[seg[i]]
+      }
+      return typeof fn === "function" ? { fn, parent } : null
+    }
 
     // Validate every name BEFORE invoking any plugin, so a missing-function
     // throw can't strand promises already returned by earlier plugins.
-    if (options.warn) {
-      for (const c of calls) {
-        if (!callable(c.name)) throw new Error(`nano-var-template: Missing function ${c.name}`)
+    for (const c of calls) {
+      c.resolved = lookupFn(c.name)
+      if (!c.resolved && options.warn) {
+        throw new Error(`nano-var-template: Missing function ${c.name}`)
       }
     }
     let hasPromise = false
     try {
       for (const c of calls) {
-        if (!callable(c.name)) {
+        if (!c.resolved) {
           parts[c.at] = c.tag // warn: false - leave the tag in place
           continue
         }
-        const result = data[c.name](c.arg)
+        const result = c.resolved.fn.call(c.resolved.parent, c.arg)
         if (result && typeof result.then === "function") hasPromise = true
         parts[c.at] = result
       }

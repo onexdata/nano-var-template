@@ -386,6 +386,113 @@ describe("function argument fidelity", () => {
   })
 })
 
+// ─── Function-mode delimiter coverage ───────────────────────────────────────
+
+describe("function-mode delimiters", () => {
+  it("supports multi-character end delimiters", () => {
+    const tpl = Tpl({ functions: true, start: "{{", end: "}}" })
+    assert.equal(tpl("x {{fn:a}} y", { fn: s => `[${s}]` }), "x [a] y")
+  })
+
+  it("a multi-char end delimiter lets arguments contain its single-char pieces", () => {
+    const tpl = Tpl({ functions: true, start: "{{", end: "}}" })
+    assert.equal(
+      tpl('{{parse:{"a":1}}}', { parse: s => `GOT:${s}` }),
+      'GOT:{"a":1}'
+    )
+  })
+
+  it("supports identical start and end delimiters", () => {
+    const tpl = Tpl({ functions: true, start: "%", end: "%" })
+    assert.equal(tpl("x %fn:a% y", { fn: s => `[${s}]` }), "x [a] y")
+  })
+})
+
+// ─── Namespaced plugins (dotted function names) ─────────────────────────────
+
+describe("namespaced plugins", () => {
+  const tpl = Tpl({ functions: true })
+  const plugins = {
+    format: {
+      date: s => `DATE(${s})`,
+      money: s => `$${s}`
+    },
+    greet: n => `hi ${n}`
+  }
+
+  it("resolves dotted names through nested plugin objects", () => {
+    assert.equal(
+      tpl("#{format.date:2026} #{format.money:5} #{greet:x}", plugins),
+      "DATE(2026) $5 hi x"
+    )
+  })
+
+  it("preserves `this` for namespaced methods", () => {
+    const ns = { util: { prefix: ">>", tag(s) { return this.prefix + s } } }
+    assert.equal(tpl("#{util.tag:hello}", ns), ">>hello")
+  })
+
+  it("throws Missing function for a missing namespace member", () => {
+    assert.throws(() => tpl("#{format.nope:x}", plugins), /Missing function format\.nope/)
+  })
+
+  it("throws Missing function when the path dead-ends past a function", () => {
+    assert.throws(() => tpl("#{format.date.deeper:x}", plugins), /Missing function/)
+  })
+
+  it("blocks Object.prototype members mid-path", () => {
+    assert.throws(() => tpl("#{format.constructor:x}", plugins), /Missing function/)
+  })
+})
+
+// ─── Escaping ───────────────────────────────────────────────────────────────
+
+describe("escaping", () => {
+  const tpl = Tpl()
+  const fnTpl = Tpl({ functions: true })
+  const data = { name: "Jane" }
+
+  it("a backslash before a tag renders it literally (variable mode)", () => {
+    assert.equal(tpl("\\${name}", data), "${name}")
+  })
+
+  it("a backslash pair collapses and the tag substitutes", () => {
+    assert.equal(tpl("\\\\${name}", data), "\\Jane")
+  })
+
+  it("odd/even backslash runs follow C-style parity", () => {
+    assert.equal(tpl("\\\\\\${name}", data), "\\${name}")     // 3 -> \ + literal
+    assert.equal(tpl("\\\\\\\\${name}", data), "\\\\Jane")    // 4 -> \\ + value
+  })
+
+  it("backslashes anywhere else are not special", () => {
+    assert.equal(tpl("a\\b c\\\\d ${name}", data), "a\\b c\\\\d Jane")
+  })
+
+  it("escapes work in function mode - the plugin is not called", () => {
+    let called = false
+    assert.equal(fnTpl("\\#{fn}", { fn: () => { called = true; return "X" } }), "#{fn}")
+    assert.equal(called, false)
+  })
+
+  it("a backslash pair in function mode collapses and the plugin runs", () => {
+    assert.equal(fnTpl("\\\\#{fn:x}", { fn: s => `[${s}]` }), "\\[x]")
+  })
+
+  it("escapes work with custom delimiters", () => {
+    const t = Tpl({ start: "{{", end: "}}" })
+    assert.equal(t("\\{{name}} {{name}}", data), "{{name}} Jane")
+  })
+
+  it("backslashes inside function arguments pass through verbatim", () => {
+    assert.equal(fnTpl("#{echo:a\\b}", { echo: s => s }), "a\\b")
+  })
+
+  it("an escaped tag mixed with live tags", () => {
+    assert.equal(tpl("real ${name}, literal \\${name}", data), "real Jane, literal ${name}")
+  })
+})
+
 // ─── Async plugin functions ─────────────────────────────────────────────────
 
 describe("async plugin functions", () => {
@@ -553,6 +660,18 @@ describe("edge cases", () => {
   it("does not match empty delimiters", () => {
     // ${} has no valid path inside — regex requires at least one char
     assert.equal(tpl("${}", {}), "${}")
+  })
+
+  it("treats a property explicitly set to undefined as missing", () => {
+    assert.throws(() => tpl("${x}", { x: undefined }), /'x' missing/)
+    const quiet = Tpl({ warn: false })
+    assert.equal(quiet("${x}", { x: undefined }), "${x}")
+  })
+
+  it("function mode leaves empty or invalid tokens as literal text", () => {
+    const fnTpl = Tpl({ functions: true })
+    // "" and "not a name" both fail the name pattern -> literal, not an error
+    assert.equal(fnTpl("#{} #{not a name} #{ok}", { ok: () => "OK" }), "#{} #{not a name} OK")
   })
 })
 

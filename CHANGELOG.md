@@ -5,6 +5,23 @@ All notable changes to this project are documented here. Format loosely follows
 follow strict semver pre-1.0 conventions, but bumps are: patch = pure bug fix,
 minor = additive/behavior-tightening, major = a documented breaking change.
 
+## [2.3.0] - 2026-08-12
+
+### Added
+- **Escaping**: a backslash immediately before a start delimiter renders the
+  tag literally (`\${name}` → `${name}`); backslash pairs collapse with
+  C-style parity (`\\${name}` → `\` + value). Backslashes anywhere else are
+  untouched. Works in both modes and with any custom delimiters.
+- **Namespaced plugins**: dotted function names walk the plugin object
+  (`#{format.date:...}` calls `plugins.format.date`), preserving `this`.
+  Previously a dotted name always failed with a confusing "Missing function
+  a.b" (looked up the literal key `"a.b"`) - a quirk dating to 2018.
+- README examples are now an executable test suite (`test/readme.test.js`) -
+  the docs can no longer silently drift from real behavior.
+- CI: Node 24 in the test matrix, npm caching, and a test-coverage report.
+- Dependabot (monthly, npm + GitHub Actions).
+- README badges (CI status, npm version).
+
 ## [2.2.1] - 2026-08-12
 
 Fixes for regressions introduced in 2.1.0/2.2.0, found by post-release review.
