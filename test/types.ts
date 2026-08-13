@@ -8,6 +8,11 @@ const s: string = varTpl("Hello ${name}!", { name: "Jane" })
 const customVarTpl = Tpl({ start: "{{", end: "}}", warn: false })
 const s2: string = customVarTpl("Hello {{name}}!", { name: "Jane" })
 
+// A value of the exported options type - `functions` is only known to be
+// `boolean | undefined`, so this exercises the catch-all overload.
+const opts: Tpl.TplOptions = { start: "<<", end: ">>" }
+const dynamicTpl: Tpl.VarTpl | Tpl.FunctionTpl = Tpl(opts)
+
 const fnTpl = Tpl({ functions: true })
 const result: string | Promise<string> = fnTpl("#{greet:Jane}", {
   greet: name => `Hi ${name}`
@@ -19,4 +24,4 @@ const result: string | Promise<string> = fnTpl("#{greet:Jane}", {
 // @ts-expect-error
 const notNarrowedToString: string = fnTpl("#{greet:Jane}", { greet: () => "x" })
 
-console.log(s, s2, result, notNarrowedToString)
+console.log(s, s2, result, notNarrowedToString, dynamicTpl)

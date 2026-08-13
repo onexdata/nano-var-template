@@ -269,6 +269,123 @@ describe("function mode", () => {
   })
 })
 
+// ─── Prototype-chain data (allowed) vs Object.prototype (blocked) ──────────
+
+describe("prototype-chain data", () => {
+  const tpl = Tpl()
+  const fnTpl = Tpl({ functions: true })
+
+  it("resolves class-instance getters (variable mode)", () => {
+    class User {
+      get name() { return "Jane" }
+    }
+    assert.equal(tpl("${u.name}", { u: new User() }), "Jane")
+  })
+
+  it("resolves Object.create() default layering (variable mode)", () => {
+    const cfg = Object.create({ theme: "dark" })
+    cfg.lang = "en"
+    assert.equal(tpl("${c.theme} ${c.lang}", { c: cfg }), "dark en")
+  })
+
+  it("calls class-instance methods as plugins (function mode)", () => {
+    class Plugins {
+      greet(n) { return `hi ${n}` }
+    }
+    assert.equal(fnTpl("#{greet:x}", new Plugins()), "hi x")
+  })
+
+  it("still blocks Object.prototype members even via a class instance", () => {
+    class User {}
+    assert.throws(() => tpl("${u.constructor}", { u: new User() }), /constructor.*missing/)
+  })
+})
+
+// ─── Malformed input safety ─────────────────────────────────────────────────
+
+describe("malformed input safety (function mode)", () => {
+  const tpl = Tpl({ functions: true })
+  const quiet = Tpl({ functions: true, warn: false })
+
+  it("an unclosed opener before a real tag stays literal - the real tag still resolves", () => {
+    const result = tpl("#{a:x #{b:y} z", { a: s => `[${s}]`, b: s => s.toUpperCase() })
+    assert.equal(result, "#{a:x Y z")
+  })
+
+  it("a plugin that re-enters the same instance is safe", () => {
+    const plugins = {
+      outer: () => tpl("#{inner:x}", plugins),
+      inner: s => `I(${s})`
+    }
+    assert.equal(tpl("a #{outer:1} b", plugins), "a I(x) b")
+  })
+
+  it("null/undefined data follows the warn convention instead of TypeError-ing", () => {
+    assert.equal(quiet("#{a}", null), "#{a}")
+    assert.throws(() => tpl("#{a}", undefined), err =>
+      err instanceof Error && /Missing function/.test(err.message))
+  })
+
+  it("handles a large adversarial unclosed-tag template in linear time", () => {
+    const bomb = "#{a:".repeat(100000) + "}"
+    const started = Date.now()
+    const result = quiet(bomb, { a: s => `[${s}]` })
+    assert.ok(Date.now() - started < 2000, "scan should be linear, not quadratic")
+    assert.ok(result.endsWith("#{a:[]"))
+  })
+
+  it("a missing function throws before any plugin runs - no orphaned promises", async () => {
+    let rejected = null
+    const handler = r => { rejected = r }
+    process.on("unhandledRejection", handler)
+    try {
+      let aRan = false
+      assert.throws(() => tpl("#{a}#{nope}", {
+        a: () => { aRan = true; return Promise.reject(new Error("orphaned")) }
+      }), /Missing function nope/)
+      assert.equal(aRan, false, "plugins must not run when validation fails")
+      await new Promise(r => setTimeout(r, 50))
+      assert.equal(rejected, null, "no unhandled rejection may escape")
+    } finally {
+      process.removeListener("unhandledRejection", handler)
+    }
+  })
+
+  it("a plugin throwing mid-template does not orphan earlier plugins' promises", async () => {
+    let rejected = null
+    const handler = r => { rejected = r }
+    process.on("unhandledRejection", handler)
+    try {
+      assert.throws(() => tpl("#{a}#{boom}", {
+        a: () => Promise.reject(new Error("orphaned")),
+        boom: () => { throw new Error("sync boom") }
+      }), /sync boom/)
+      await new Promise(r => setTimeout(r, 50))
+      assert.equal(rejected, null, "no unhandled rejection may escape")
+    } finally {
+      process.removeListener("unhandledRejection", handler)
+    }
+  })
+})
+
+// ─── Function argument fidelity ─────────────────────────────────────────────
+
+describe("function argument fidelity", () => {
+  const tpl = Tpl({ functions: true })
+
+  it("passes the argument verbatim, whitespace included", () => {
+    assert.equal(tpl("#{echo: x }", { echo: s => JSON.stringify(s) }), '" x "')
+  })
+
+  it("an explicit ':' with nothing after it passes empty string, not undefined", () => {
+    assert.equal(tpl("#{echo:}", { echo: s => (s === "" ? "empty" : "?") }), "empty")
+  })
+
+  it("tolerates whitespace around the function name", () => {
+    assert.equal(tpl("#{ greet :Jane}", { greet: n => `Hi ${n}` }), "Hi Jane")
+  })
+})
+
 // ─── Async plugin functions ─────────────────────────────────────────────────
 
 describe("async plugin functions", () => {

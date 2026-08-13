@@ -106,6 +106,12 @@ tpl("#{link:https://example.com, Click here}", plugins)
 // → '<a href="https://example.com">Click here</a>'
 ```
 
+The argument is passed **verbatim** — everything between the first `:` and the
+closing delimiter, whitespace included. The one thing an argument cannot
+contain is the closing delimiter itself: `#{parse:{"a":1}}` ends at the first
+`}`. If your arguments need `}`, give that pass a different closing delimiter
+(`)`, `]`, `]]`, ...) — the same rule as choosing delimiters between passes.
+
 ### Async functions
 
 A plugin function can return a Promise — useful for i18n lookups, database reads, or any async work. When every function invoked by a template resolves synchronously, `tpl()` returns a plain `string`, exactly as before — nothing changes for existing sync-only usage. But if *any* invoked function returns a Promise, `tpl()` returns `Promise<string>` instead, resolving once every call has settled:
@@ -212,7 +218,25 @@ tpl("Hello ${name}!", {})
 
 Errors are real `Error` instances (`err.message`, `err instanceof Error`), not strings.
 
-Only a data object's **own** properties are resolved — inherited `Object.prototype` members like `constructor`, `toString`, and `__proto__` are always treated as missing, even against `{}`. This keeps template authors from ever reading (or, in function mode, invoking) something the caller didn't explicitly put in the data object.
+## Security model
+
+What "safe" means here, precisely:
+
+- **No code execution from templates.** No `eval`, no `new Function`, no ES6
+  backtick interpolation. A template can only *reference* names; the only code
+  that ever runs is the plugin functions you registered yourself.
+- **`Object.prototype` member names are always blocked** — `constructor`,
+  `__proto__`, `toString`, `hasOwnProperty`, etc. resolve as *missing* in both
+  modes, so a template can never read engine internals or invoke something you
+  didn't put there. Everything else on a prototype chain works normally: class
+  getters, class methods used as plugins, and `Object.create()` layering all
+  resolve as you'd expect.
+- **Malformed input is linear-time.** Template scanning does not backtrack, so
+  a pathological or adversarial template (e.g. hundreds of KB of unclosed
+  tags) costs milliseconds, not CPU-pinning seconds.
+- **No HTML escaping.** Values are interpolated as-is. If you template into
+  HTML with untrusted *data* (as opposed to untrusted templates), escape in
+  your plugins or before passing data in — that's your layer, by design.
 
 ## Options
 
@@ -221,7 +245,9 @@ const tpl = require('nano-var-template')({
   start: '${',    // Opening delimiter (any string)
   end: '}',       // Closing delimiter (any string)
   functions: false, // true = function mode (data object contains functions, not values)
-  path: '[a-z0-9_$][\\.a-z0-9_]*',  // Regex for allowed variable paths
+  path: '[a-z0-9_$][\\.a-z0-9_$]*', // Regex for allowed variable paths
+                                    // (in function mode: validates the function
+                                    // name, i.e. the part before the first ':')
   warn: true       // true = throw on missing variables, false = leave token unchanged
 })
 ```

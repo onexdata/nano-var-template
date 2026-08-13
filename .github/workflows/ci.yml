@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [master]
 
+# Serialize runs per ref so two rapid pushes to master can't race the
+# publish job into publishing against a stale registry version.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -21,6 +27,10 @@ jobs:
       - run: npm test
       - run: npm run lint
       - run: npm run typecheck
+      # index.d.ts must stay valid for consumers on older TypeScript, not just
+      # the repo's own devDependency (TS 7 accepts declaration shapes TS 5
+      # rejects, e.g. TS2309 - which shipped broken in 2.2.0).
+      - run: npx -y -p typescript@5 tsc --noEmit --strict --target es2020 --module commonjs test/types.ts
 
   publish:
     needs: test
@@ -36,18 +46,23 @@ jobs:
           node-version: 20.x
           registry-url: https://registry.npmjs.org
 
-      - name: Check whether package.json version is already published
+      - name: Check whether package.json version is newer than published
         id: version-check
+        # Publish only when the local version is strictly NEWER than the
+        # registry's. A plain != would also fire on an older local version
+        # (e.g. after a revert), attempting a doomed publish that turns every
+        # master push red. And if `npm view` fails (transient registry error),
+        # fail the step - never guess.
         run: |
-          LOCAL_VERSION=$(node -p "require('./package.json').version")
-          PUBLISHED_VERSION=$(npm view nano-var-template version 2>/dev/null || echo "none")
-          echo "local=$LOCAL_VERSION"
-          echo "published=$PUBLISHED_VERSION"
-          if [ "$LOCAL_VERSION" != "$PUBLISHED_VERSION" ]; then
-            echo "should_publish=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "should_publish=false" >> "$GITHUB_OUTPUT"
-          fi
+          set -euo pipefail
+          LOCAL=$(node -p "require('./package.json').version")
+          PUBLISHED=$(npm view nano-var-template version)
+          echo "local=$LOCAL published=$PUBLISHED"
+          SHOULD=$(node -e "
+            const [l, p] = process.argv.slice(1).map(v => v.split('.').map(Number));
+            const gt = l[0] !== p[0] ? l[0] > p[0] : l[1] !== p[1] ? l[1] > p[1] : l[2] > p[2];
+            console.log(gt)" "$LOCAL" "$PUBLISHED")
+          echo "should_publish=$SHOULD" >> "$GITHUB_OUTPUT"
 
       - name: Publish to npm
         if: steps.version-check.outputs.should_publish == 'true'
