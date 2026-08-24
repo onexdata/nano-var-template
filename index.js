@@ -2,23 +2,25 @@ const escapeRegex = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 
 const own = Object.prototype.hasOwnProperty
 
-// Object.prototype's own member names (constructor, __proto__, toString, ...)
-// are never treated as data, in either mode. Everything else on a prototype
-// chain - class getters, methods, Object.create() layering - resolves normally.
-const banned = key => own.call(Object.prototype, key)
-
-// When the holder is a function, Function.prototype's own member names are
-// blocked the same way: reading `caller`/`arguments` throws an engine
-// TypeError (poison accessors) straight through the warn contract, and
-// call/apply/bind are not plugins. A function's OWN properties (name, length,
-// attached sub-plugins) and anything inherited from user code still resolve.
-const fnBanned = (x, key) =>
-  typeof x === "function" && own.call(Function.prototype, key) && !own.call(x, key)
-
 // The one lookup guard both modes share - this predicate IS the prototype
-// defense, so it exists exactly once. Object(x) boxes primitives so `in`
-// never throws; x == null is checked first because Object(null) would lie.
-const hasKey = (x, key) => x != null && !banned(key) && !fnBanned(x, key) && key in Object(x)
+// defense, so it exists exactly once. The rule: an object's OWN keys are
+// always data, even ones named `toString`/`constructor` (real-world JSON has
+// such keys). But a name that would resolve to Object.prototype's own
+// members (constructor, __proto__, toString, ...) - or Function.prototype's
+// (call, apply, bind, plus the caller/arguments poison accessors that throw
+// raw TypeErrors on read) when the holder is a function - is missing, so a
+// template can never reach engine internals. Everything else on a prototype
+// chain resolves normally: class getters, methods, Object.create() layering.
+// Object(x) boxes primitives so the checks never throw; x == null is checked
+// first because Object(null) would lie.
+const hasKey = (x, key) => {
+  if (x == null) return false
+  const o = Object(x)
+  if (own.call(o, key)) return true
+  if (own.call(Object.prototype, key)) return false
+  if (typeof x === "function" && own.call(Function.prototype, key)) return false
+  return key in o
+}
 
 const Tpl = options => {
   // You can pass options to overide defaults...
@@ -28,30 +30,46 @@ const Tpl = options => {
       ? "#{"
       : "${",
       end: "}",
-      path: "[a-z0-9_$][\\.a-z0-9_$]*",
+      path: "[a-zA-Z0-9_$][\\.a-zA-Z0-9_$]*",
       warn: true,
       functions: false
     },
     options
   )
-  // The two leading groups implement escaping: backslash PAIRS immediately
-  // before a start delimiter collapse to literal backslashes, and an odd
-  // remaining backslash suppresses the tag (renders it as literal text).
-  // Backslashes anywhere else in a template are not special at all.
+  // The escaping rule, identical in both modes: a backslash run immediately
+  // before ANY occurrence of the start delimiter follows C-style parity -
+  // pairs collapse to literal backslashes, an odd remaining backslash renders
+  // the delimiter (and so the tag, if it was one) as literal text. Backslashes
+  // anywhere else are not special at all. The parity rule applying to every
+  // occurrence - not just real tags - is what makes `tpl.escape()` sound: it
+  // can escape a value without knowing what the value will sit next to.
+  //
+  // First alternative: a real tag, with the two escape groups in front.
+  // Second alternative: any other start-delimiter occurrence - no tag to
+  // substitute, but the same parity applies to the backslashes before it.
+  //
+  // No "i" flag: delimiters must match case-exactly (a BEGIN/END pass must
+  // not consume "begin...end", and function mode's indexOf scan is already
+  // case-sensitive). The default path pattern spells out A-Z instead.
+  const startRe = escapeRegex(options.start)
   const match = new RegExp(
-    "((?:\\\\\\\\)*)(\\\\?)" +
-      escapeRegex(options.start) + "\\s*(" + options.path + ")\\s*" + escapeRegex(options.end),
-    "gi"
+    "((?:\\\\\\\\)*)(\\\\?)" + startRe + "\\s*(" + options.path + ")\\s*" + escapeRegex(options.end) +
+      "|((?:\\\\\\\\)*)(\\\\?)" + startRe,
+    "g"
   )
   // Function mode validates the name (the part before ':') against the same
   // path option, anchored.
-  const namePattern = new RegExp("^(?:" + options.path + ")$", "i")
-  return (template, data) => {
+  const namePattern = new RegExp("^(?:" + options.path + ")$")
+  const escRun = new RegExp("(\\\\*)" + startRe, "g")
+  const tpl = (template, data) => {
     if (!options.functions) {
       // Merge the passed data into the template string we're sending back...
       // (String.replace collects every match before invoking the callback,
       // so a callback that re-enters this instance can't corrupt the scan.)
-      return template.replace(match, (tag, pairs, esc, token) => {
+      return template.replace(match, (tag, pairs, esc, token, pairs2) => {
+        // Second alternative: a start delimiter that isn't part of a valid
+        // tag. Nothing to substitute - apply backslash parity and move on.
+        if (token === undefined) return "\\".repeat(pairs2.length / 2) + options.start
         const prefix = "\\".repeat(pairs.length / 2)
         // Odd backslash: the tag is escaped - render it literally, minus the
         // escaping backslash (and with pairs collapsed).
@@ -99,52 +117,66 @@ const Tpl = options => {
     const parts = []
     const calls = [] // { at: index into parts, name, arg, tag }
     let pos = 0
-    let end = -1 // memoized "first end delimiter at or after `from`" - only ever moves forward
+    let end = -1 // memoized "first end delimiter at or after `from`" - only moves forward; Infinity = none left
+    let slid = -1 // memoized closer-run slide for the current `end`
+    const findEnd = from => {
+      if (end !== Infinity && end < from) {
+        end = template.indexOf(endD, from)
+        if (end === -1) end = Infinity
+      }
+      return end
+    }
     for (;;) {
       const s = template.indexOf(startD, pos)
       if (s === -1) break
       const b = slashesBefore(s, pos)
-      if (b & 1) {
-        // Escaped opener: emit it literally, minus the escaping backslash
-        // (and with backslash pairs collapsed), then keep scanning after it.
-        parts.push(template.slice(pos, s - b) + "\\".repeat((b - 1) / 2) + startD)
-        pos = s + startD.length
-        continue
-      }
       const from = s + startD.length
-      if (end < from) end = template.indexOf(endD, from)
-      if (end === -1) break
-      // Multi-char closers: in a run like '}}}' with end '}}', the FIRST
-      // alignment would steal the argument's final '}' ('{{parse:{"a":1}}}'
-      // silently truncating the arg to '{"a":1'). Slide to the LAST
-      // overlapping alignment so the argument keeps its closing characters.
-      // (Never for single-char closers - '%fn:a%%b%' must close at the first
-      // '%', or the slide would eat the next tag's opener.)
-      if (endD.length > 1) {
-        while (template.startsWith(endD, end + 1)) end++
+      let name, arg, e
+      // An opener is a tag when its backslash run is even (odd = escaped),
+      // a closer exists, no unescaped inner opener pre-empts it (unclosed or
+      // nested like "#{a:x #{b:y} z" - the inner opener may be a real tag),
+      // and the name validates.
+      let isTag = !(b & 1) && findEnd(from) !== Infinity
+      if (isTag) {
+        e = end
+        // Multi-char closers: in a run like '}}}' with end '}}', the FIRST
+        // alignment would steal the argument's final '}' ('{{parse:{"a":1}}}'
+        // silently truncating the arg to '{"a":1'). Slide to the LAST
+        // overlapping alignment so the argument keeps its closing characters.
+        // (Never for single-char closers - '%fn:a%%b%' must close at the
+        // first '%', or the slide would eat the next tag's opener. Never when
+        // start and end are identical either: '%%a:x%%%%b:y%%' would slide
+        // into the next tag's opener and destroy the first tag. Memoized so
+        // repeated non-tag openers before one long run can't go quadratic.)
+        if (endD.length > 1 && startD !== endD) {
+          if (slid < e) {
+            slid = e
+            while (template.startsWith(endD, slid + 1)) slid++
+          }
+          e = slid
+        }
+        const inner = nextOpener(from)
+        if (inner !== -1 && inner < e) isTag = false
+        else {
+          // Only the first ':' separates the function name from its argument -
+          // everything after it (colons, spaces, anything) is the argument, verbatim.
+          const token = template.slice(from, e)
+          const ci = token.indexOf(":")
+          name = (ci === -1 ? token : token.slice(0, ci)).trim()
+          arg = ci === -1 ? undefined : token.slice(ci + 1)
+          isTag = namePattern.test(name)
+        }
       }
-      // An unescaped opener before this tag closes means this opener is not a
-      // tag (unclosed, or nested like "#{a:x #{b:y} z"). Emit it as literal
-      // text and rescan from the inner opener, which may be a real tag.
-      const inner = nextOpener(from)
-      if (inner !== -1 && inner < end) {
-        parts.push(template.slice(pos, inner))
-        pos = inner
-        continue
-      }
-      // Only the first ':' separates the function name from its argument -
-      // everything after it (colons, spaces, anything) is the argument, verbatim.
-      const token = template.slice(from, end)
-      const ci = token.indexOf(":")
-      const name = (ci === -1 ? token : token.slice(0, ci)).trim()
-      const arg = ci === -1 ? undefined : token.slice(ci + 1)
-      if (!namePattern.test(name)) {
-        // Not a valid tag - leave the text alone, keep scanning past the opener
-        parts.push(template.slice(pos, from))
+      if (!isTag) {
+        // Literal opener - escaped, unclosed, pre-empted by an inner opener,
+        // or an invalid name. Backslash parity applies exactly as it would
+        // for a tag: pairs collapse, an odd backslash is consumed escaping
+        // the opener. Keep scanning after the opener.
+        parts.push(template.slice(pos, s - b) + "\\".repeat(b >> 1) + startD)
         pos = from
         continue
       }
-      const tagEnd = end + endD.length
+      const tagEnd = e + endD.length
       parts.push(template.slice(pos, s - b) + "\\".repeat(b / 2))
       calls.push({ at: parts.length, name, arg, tag: template.slice(s, tagEnd) })
       parts.push(null)
@@ -189,9 +221,13 @@ const Tpl = options => {
     } catch (err) {
       // A plugin threw synchronously mid-loop. Silence promises already in
       // flight so they can't crash the process as unhandled rejections after
-      // the caller catches this error.
+      // the caller catches this error. Each part is guarded: a poisoned
+      // thenable (whose `then` itself throws) must neither mask `err` nor
+      // stop the parts after it from being settled.
       for (const p of parts) {
-        if (p && typeof p.then === "function") p.then(() => {}, () => {})
+        try {
+          if (p && typeof p.then === "function") p.then(() => {}, () => {})
+        } catch { /* poisoned thenable - nothing in flight to settle */ }
       }
       throw err
     }
@@ -200,5 +236,15 @@ const Tpl = options => {
       ? Promise.all(parts).then(resolved => resolved.map(String).join(""))
       : parts.map(String).join("")
   }
+  // Escape a value so it survives THIS instance's pass as literal text -
+  // the safe way to move untrusted data across pass boundaries. Every
+  // occurrence of the start delimiter gets its backslash run doubled (parity
+  // preserved) plus one escaping backslash; a trailing backslash run is
+  // doubled too, so the value can't escape (or pair-collapse into) whatever
+  // the template puts right after it.
+  tpl.escape = value => String(value)
+    .replace(escRun, (m, bs) => bs + bs + "\\" + options.start)
+    .replace(/\\+$/, m => m + m)
+  return tpl
 }
 module.exports = Tpl

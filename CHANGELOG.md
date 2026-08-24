@@ -5,6 +5,63 @@ All notable changes to this project are documented here. Format loosely follows
 follow strict semver pre-1.0 conventions, but bumps are: patch = pure bug fix,
 minor = additive/behavior-tightening, major = a documented breaking change.
 
+## [2.4.0] - 2026-08-23
+
+Results of an independent three-way review (architecture, adversarial
+correctness, distribution) of 2.3.1.
+
+### Fixed
+- **A poisoned thenable could mask the real error and leak unhandled
+  rejections**: if a plugin returned an object whose `then` throws when
+  called, a synchronous throw later in the same template aborted the
+  promise-silencing loop - the caller caught the poison error instead of the
+  real one, and promises after the poisoned part escaped as unhandled
+  rejections. Each part is now settled independently.
+- **Custom delimiters containing letters matched case-insensitively in
+  variable mode** (a `BEGIN`/`END` pass silently substituted into
+  `begin...end` text) while function mode was case-sensitive for the same
+  config. The `i` regex flag is gone; delimiters now match case-exactly in
+  both modes. The default `path` spells out `a-zA-Z`, so `${Name}`/`${NAME}`
+  match exactly as before - only custom `path` patterns that relied on the
+  implicit `i` flag are affected.
+- **Identical multi-char start/end delimiters destroyed the first of two
+  adjacent tags** (`%%a:x%%%%b:y%%` with start = end = `%%` dropped the `a`
+  tag): the 2.3.1 closer-run slide crossed into the next tag's opener. The
+  slide is now suppressed when start and end are identical.
+- The CI publish gate now **fails loudly on prerelease version strings**
+  instead of silently skipping the publish forever with a green checkmark
+  (`Number("2-beta")` is `NaN`, and `NaN` comparisons are always false).
+- **Escaping is now uniform across both modes and every position**: a
+  backslash run immediately before *any* occurrence of the start delimiter
+  follows C-style parity - pairs collapse, an odd backslash renders the
+  delimiter literally - whether or not what follows parses as a tag.
+  Previously variable mode left backslashes before non-tags untouched while
+  function mode consumed the odd backslash but never collapsed pairs in its
+  literal paths; the README claimed the modes were identical. This uniformity
+  is what makes the new `escape()` helper sound without knowing what a value
+  will sit next to.
+
+### Changed
+- **An object's own keys always win over the prototype ban**: data like
+  `{"toString": "x"}` or a plugin registry with an own `hasOwnProperty`
+  function now resolves (previously silently unreachable - a real-world JSON
+  hazard). Inherited `Object.prototype`/`Function.prototype` member names are
+  blocked exactly as before; the rule is now uniform across both modes
+  instead of function-lookup-only.
+
+### Added
+- **`tpl.escape(value)`** on every instance: escapes a value so it survives
+  that instance's pass as literal text - the safe way to move untrusted data
+  across pass boundaries. Correct backslash parity for any value (trailing
+  backslash runs are doubled so a value can't interfere with adjacent
+  template text), typed in `index.d.ts`, documented with pinned tests.
+- README "Security model" now documents the pattern's central caveat:
+  **untrusted data crossing pass boundaries becomes live markup for later
+  passes** (same-pass injection remains inert by design), with the
+  escape-the-delimiter mitigation - plus notes that `warn` covers missing
+  names, not malformed tags (unclosed tags pass through as literal text),
+  and that the `path` option is spliced in as raw regex.
+
 ## [2.3.1] - 2026-08-23
 
 ### Fixed

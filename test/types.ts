@@ -47,4 +47,8 @@ const s4 = fnTpl("#{format.date:2026}", namespaced)
 class Plugins { greet(n: string | undefined) { return `hi ${n}` } }
 const s5 = fnTpl("#{greet:x}", new Plugins())
 
-console.log(s, s2, s3, s4, s5, result, notNarrowedToString, dynamicTpl, contextual)
+// escape() exists on both instance shapes, takes anything, returns string.
+const e1: string = varTpl.escape("untrusted #{x}")
+const e2: string = fnTpl.escape(42)
+
+console.log(s, s2, s3, s4, s5, result, notNarrowedToString, dynamicTpl, contextual, e1, e2)

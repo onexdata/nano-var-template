@@ -184,15 +184,26 @@ describe("whitespace in tokens", () => {
 describe("case sensitivity", () => {
   const tpl = Tpl()
 
-  it("matches variable names case-insensitively in the template", () => {
-    // regex has 'i' flag so ${NAME} matches, but token preserves original case
-    // for data lookup — so data key must match the template's case
+  it("matches variable names of any case in the template", () => {
+    // the default path pattern spells out a-zA-Z, and the token preserves its
+    // original case for data lookup — so data key must match the template's case
     assert.equal(tpl("${Name}", { Name: "Jane" }), "Jane")
   })
 
   it("data key case must match template token case", () => {
     // ${NAME} looks up data["NAME"], not data["name"]
     assert.throws(() => tpl("${NAME}", { name: "Jane" }))
+  })
+
+  it("custom delimiters containing letters are case-sensitive in both modes", () => {
+    // BEGIN/END must not consume "begin...end" (the old 'i'-flagged regex did,
+    // silently substituting into text that was never a tag)
+    const shout = Tpl({ start: "BEGIN", end: "END" })
+    assert.equal(shout("beginnameend", { name: "X" }), "beginnameend")
+    assert.equal(shout("BEGINnameEND", { name: "X" }), "X")
+    const fnShout = Tpl({ functions: true, start: "BEGIN", end: "END", warn: false })
+    assert.equal(fnShout("beginfnend", { fn: () => "Z" }), "beginfnend")
+    assert.equal(fnShout("BEGINfnEND", { fn: () => "Z" }), "Z")
   })
 })
 
@@ -328,6 +339,20 @@ describe("prototype-chain data", () => {
     assert.equal(tpl("${contact.call} ${contact.caller}", { contact: { call: "555-1234", caller: "Bob" } }), "555-1234 Bob")
     assert.equal(fnTpl("#{phone.call:x}", { phone: { call: n => `dial(${n})` } }), "dial(x)")
   })
+
+  it("own keys named like Object.prototype members are data (JSON hazard)", () => {
+    assert.equal(tpl("${obj.toString}", { obj: { toString: "CUSTOM" } }), "CUSTOM")
+    assert.equal(tpl("${obj.constructor}", { obj: JSON.parse('{"constructor":"c"}') }), "c")
+    // JSON.parse creates an OWN "__proto__" key (it does not set the prototype)
+    assert.equal(tpl("${obj.__proto__}", { obj: JSON.parse('{"__proto__":"p"}') }), "p")
+    assert.equal(fnTpl("#{hasOwnProperty:x}", { hasOwnProperty: a => `own(${a})` }), "own(x)")
+  })
+
+  it("inherited prototype members stay blocked - only OWN keys win", () => {
+    const quiet = Tpl({ warn: false })
+    assert.equal(quiet("${obj.toString}", { obj: {} }), "${obj.toString}")
+    assert.throws(() => tpl("${constructor}", {}), /constructor.*missing/)
+  })
 })
 
 // ─── Malformed input safety ─────────────────────────────────────────────────
@@ -395,6 +420,27 @@ describe("malformed input safety (function mode)", () => {
       process.removeListener("unhandledRejection", handler)
     }
   })
+
+  it("a poisoned thenable cannot mask the real error or leak orphans past it", async () => {
+    // A plugin returning { then() { throw } } used to abort the silencing
+    // loop: the poison error replaced the real sync error, and promises after
+    // the poisoned part escaped as unhandled rejections.
+    let rejected = null
+    const handler = r => { rejected = r }
+    process.on("unhandledRejection", handler)
+    try {
+      assert.throws(() => tpl("#{a}#{poison}#{b}#{boom}", {
+        a: () => Promise.reject(new Error("orphan before")),
+        poison: () => ({ then() { throw new Error("poison then() called") } }),
+        b: () => Promise.reject(new Error("orphan after")),
+        boom: () => { throw new Error("sync boom") }
+      }), /sync boom/)
+      await new Promise(r => setTimeout(r, 50))
+      assert.equal(rejected, null, "no unhandled rejection may escape")
+    } finally {
+      process.removeListener("unhandledRejection", handler)
+    }
+  })
 })
 
 // ─── Function argument fidelity ─────────────────────────────────────────────
@@ -447,6 +493,14 @@ describe("function-mode delimiters", () => {
       tpl("{{a}} {{b}}", { a: () => "A", b: () => "B" }),
       "A B"
     )
+  })
+
+  it("identical multi-char start/end delimiters close at the first closer - no slide", () => {
+    // With start === end the slide would cross '%%%%' into the next tag's
+    // opener and destroy the first tag entirely.
+    const tpl = Tpl({ functions: true, start: "%%", end: "%%" })
+    const plugins = { a: x => `A(${x})`, b: y => `B(${y})` }
+    assert.equal(tpl("%%a:x%%%%b:y%%", plugins), "A(x)B(y)")
   })
 
   it("supports identical start and end delimiters", () => {
@@ -535,12 +589,73 @@ describe("escaping", () => {
     assert.equal(fnTpl("#{echo:a\\b}", { echo: s => s }), "a\\b")
   })
 
+  it("parity applies before non-tags too, identically in both modes", () => {
+    // A backslash escapes ANY start-delimiter occurrence, not just real tags -
+    // that uniformity is what makes tpl.escape() context-free-safe.
+    const v = Tpl({ warn: false }), f = Tpl({ functions: true, warn: false })
+    assert.equal(v("\\${not valid}", {}), "${not valid}")
+    assert.equal(f("\\#{not valid}", {}), "#{not valid}")
+    assert.equal(v("\\\\${not valid}", {}), "\\${not valid}")
+    assert.equal(f("\\\\#{not valid}", {}), "\\#{not valid}")
+    assert.equal(v("\\${unclosed", {}), "${unclosed")
+    assert.equal(f("\\#{unclosed", {}), "#{unclosed")
+    assert.equal(v("\\\\${unclosed", {}), "\\${unclosed")
+    assert.equal(f("\\\\#{unclosed", {}), "\\#{unclosed")
+    // Bare (unescaped) non-tags still pass through untouched
+    assert.equal(v("a ${not valid} b", {}), "a ${not valid} b")
+    assert.equal(f("a #{not valid} b", {}), "a #{not valid} b")
+  })
+
   it("an escaped tag mixed with live tags", () => {
     assert.equal(tpl("real ${name}, literal \\${name}", data), "real Jane, literal ${name}")
   })
 })
 
 // ─── Async plugin functions ─────────────────────────────────────────────────
+
+describe("tpl.escape()", () => {
+  const fnTpl = Tpl({ functions: true })
+  const varTpl = Tpl()
+  const boom = () => { throw new Error("plugin must not run on escaped data") }
+
+  it("round-trips any value through the pass verbatim, invoking nothing", () => {
+    const values = [
+      "#{setRole:admin}", "plain text", "\\#{fn:x}", "\\\\#{fn:x}",
+      "#{a}#{b}", "#{not valid}", "trailing\\", "trailing\\\\", "x#{", "\\"
+    ]
+    for (const value of values) {
+      // Escaped value spliced before a real tag: value must come out verbatim,
+      // its tags must not run, and the real tag must still resolve.
+      const out = fnTpl(fnTpl.escape(value) + "#{real:t}", {
+        setRole: boom, a: boom, b: boom, fn: boom, real: s => `R(${s})`
+      })
+      assert.equal(out, value + "R(t)", `round-trip failed for ${JSON.stringify(value)}`)
+    }
+  })
+
+  it("a trailing backslash in the value cannot escape a following template tag", () => {
+    const out = fnTpl(fnTpl.escape("v\\") + "#{real:t}", { real: s => `R(${s})` })
+    assert.equal(out, "v\\R(t)")
+  })
+
+  it("works in variable mode with the same guarantees", () => {
+    const value = "${name} and \\${x}"
+    assert.equal(
+      varTpl(varTpl.escape(value) + " ${real}", { name: "N", x: "X", real: "R" }),
+      value + " R"
+    )
+  })
+
+  it("escapes for the instance's own delimiters", () => {
+    const custom = Tpl({ functions: true, start: "[[", end: "]]" })
+    assert.equal(custom.escape("[[fn:x]]"), "\\[[fn:x]]")
+    assert.equal(custom(custom.escape("[[fn:x]]"), { fn: boom }), "[[fn:x]]")
+  })
+
+  it("stringifies non-string values", () => {
+    assert.equal(fnTpl.escape(42), "42")
+  })
+})
 
 describe("async plugin functions", () => {
   const tpl = Tpl({ functions: true })

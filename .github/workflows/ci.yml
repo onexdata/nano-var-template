@@ -70,13 +70,22 @@ jobs:
         # (e.g. after a revert), attempting a doomed publish that turns every
         # master push red. And if `npm view` fails (transient registry error),
         # fail the step - never guess.
+        # Only plain X.Y.Z releases are supported: a prerelease string on
+        # either side fails the step LOUDLY (Number("2-beta") is NaN, and NaN
+        # comparisons are always false, which would otherwise skip publishes
+        # silently forever with a green checkmark).
         run: |
           set -euo pipefail
           LOCAL=$(node -p "require('./package.json').version")
           PUBLISHED=$(npm view nano-var-template version)
           echo "local=$LOCAL published=$PUBLISHED"
           SHOULD=$(node -e "
-            const [l, p] = process.argv.slice(1).map(v => v.split('.').map(Number));
+            const parse = v => {
+              const m = /^(\d+)\.(\d+)\.(\d+)\$/.exec(v);
+              if (!m) { console.error('gate only handles X.Y.Z releases, got: ' + v); process.exit(1); }
+              return m.slice(1).map(Number);
+            };
+            const [l, p] = process.argv.slice(1).map(parse);
             const gt = l[0] !== p[0] ? l[0] > p[0] : l[1] !== p[1] ? l[1] > p[1] : l[2] > p[2];
             console.log(gt)" "$LOCAL" "$PUBLISHED")
           echo "should_publish=$SHOULD" >> "$GITHUB_OUTPUT"

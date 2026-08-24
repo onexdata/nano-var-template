@@ -240,6 +240,31 @@ This works in both modes and with any custom delimiters: `\{{name}}`,
 `\#{fn:arg}`, etc. Escapes are consumed by the pass that owns that delimiter,
 so an escaped `${` survives to render as text even when later passes run.
 
+The parity rule applies to backslashes before **every** occurrence of the
+start delimiter, whether or not what follows parses as a tag — `\${not a tag`
+renders as `${not a tag` just like `\${name}` renders as `${name}`. That
+uniformity is what makes `escape()` (below) safe without knowing context.
+
+### tpl.escape(value)
+
+Every instance carries an `escape` helper that makes a value survive that
+instance's pass as literal text — the safe way to move untrusted data across
+pass boundaries (see the Security model):
+
+```js
+const fnTpl = require('nano-var-template')({ functions: true })
+
+fnTpl.escape("#{setRole:admin}")   // → "\\#{setRole:admin}"
+fnTpl(fnTpl.escape("#{setRole:admin}") + " #{greet:Jo}", {
+  setRole: () => { throw new Error("never runs") },
+  greet: n => `hi ${n}`
+})                                 // → "#{setRole:admin} hi Jo"
+```
+
+It escapes the start delimiter with correct backslash parity and doubles any
+trailing backslash run, so an escaped value can never invoke a plugin, hide a
+tag, or interfere with whatever the template puts right after it.
+
 ## Error handling
 
 By default, missing variables throw descriptive errors:
@@ -269,18 +294,53 @@ What "safe" means here, precisely:
 - **No code execution from templates.** No `eval`, no `new Function`, no ES6
   backtick interpolation. A template can only *reference* names; the only code
   that ever runs is the plugin functions you registered yourself.
-- **`Object.prototype` member names are always blocked** — `constructor`,
-  `__proto__`, `toString`, `hasOwnProperty`, etc. resolve as *missing* in both
-  modes, so a template can never read engine internals or invoke something you
-  didn't put there. Everything else on a prototype chain works normally: class
-  getters, class methods used as plugins, and `Object.create()` layering all
-  resolve as you'd expect.
+- **Prototype internals are unreachable.** Names that would resolve to
+  `Object.prototype`'s own members — `constructor`, `__proto__`, `toString`,
+  `hasOwnProperty`, etc. — resolve as *missing* in both modes, as do
+  `Function.prototype`'s (`call`, `apply`, `bind`, `caller`) when the holder
+  is a function. A template can never read engine internals or invoke
+  something you didn't put there. The one exception is deliberate: an
+  object's **own** key always wins, even one named `toString` — your own data
+  (real-world JSON has such keys) is never blocked. Everything else on a
+  prototype chain works normally: class getters, class methods used as
+  plugins, and `Object.create()` layering all resolve as you'd expect.
 - **Malformed input is linear-time.** Template scanning does not backtrack, so
   a pathological or adversarial template (e.g. hundreds of KB of unclosed
   tags) costs milliseconds, not CPU-pinning seconds.
 - **No HTML escaping.** Values are interpolated as-is. If you template into
   HTML with untrusted *data* (as opposed to untrusted templates), escape in
   your plugins or before passing data in — that's your layer, by design.
+- **`warn` covers missing names, not malformed tags.** An unclosed tag
+  (`"hi ${name"`) or an invalid name (`#{not a name}`) is not a tag at all —
+  it passes through as literal text without throwing, even with `warn: true`.
+
+### Untrusted data in multi-pass pipelines
+
+Within a single pass, substituted values are never re-scanned — a variable
+that resolves to the string `"${admin}"` stays literal text. Between passes
+there is no such guarantee: whatever pass N writes into the string is markup
+for pass N+1, *including substituted data*. If untrusted data flows through
+an early pass and a later pass runs in function mode, that data can invoke
+any plugin registered in the later pass, with arguments of its choosing:
+
+```js
+const Tpl = require('nano-var-template')
+const varTpl = Tpl()                     // pass 1: ${...}
+const fnTpl = Tpl({ functions: true })   // pass 2: #{...}
+
+const userInput = "#{setRole:admin}"     // attacker-controlled data
+const pass1 = varTpl("Hi ${name}", { name: userInput })
+// → "Hi #{setRole:admin}" — now live markup for pass 2
+```
+
+If a pipeline mixes untrusted data with later function-mode passes, either
+run the function passes *before* the pass that injects untrusted data, or
+escape the data for each later pass before it enters the pipeline:
+
+```js
+const safe = varTpl("Hi ${name}", { name: fnTpl.escape(userInput) })
+// → "Hi \\#{setRole:admin}" — pass 2 renders it as literal text
+```
 
 ## Options
 
@@ -289,9 +349,13 @@ const tpl = require('nano-var-template')({
   start: '${',    // Opening delimiter (any string)
   end: '}',       // Closing delimiter (any string)
   functions: false, // true = function mode (data object contains functions, not values)
-  path: '[a-z0-9_$][\\.a-z0-9_$]*', // Regex for allowed variable paths
+  path: '[a-zA-Z0-9_$][\\.a-zA-Z0-9_$]*', // Regex for allowed variable paths
                                     // (in function mode: validates the function
-                                    // name, i.e. the part before the first ':')
+                                    // name, i.e. the part before the first ':').
+                                    // This is spliced into the matcher as RAW
+                                    // regex — an escape hatch. A careless custom
+                                    // pattern can reintroduce backtracking cost
+                                    // or interact with the escaping groups.
   warn: true       // true = throw on missing variables, false = leave token unchanged
 })
 ```

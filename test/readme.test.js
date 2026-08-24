@@ -171,6 +171,50 @@ describe("README: Security model", () => {
   it("no HTML escaping - values interpolate as-is", () => {
     assert.equal(Tpl()("${html}", { html: "<b>&</b>" }), "<b>&</b>")
   })
+
+  it("untrusted data in multi-pass pipelines - same-pass injection is inert, cross-pass is live", () => {
+    const varTpl = Tpl()
+    const fnTpl = Tpl({ functions: true })
+
+    // Within one pass, a substituted value is never re-scanned.
+    assert.equal(varTpl("${a}", { a: "${b}", b: "nope" }), "${b}")
+
+    // Between passes, substituted data IS markup for the later pass.
+    const userInput = "#{setRole:admin}"
+    const pass1 = varTpl("Hi ${name}", { name: userInput })
+    assert.equal(pass1, "Hi #{setRole:admin}")
+    let invoked = null
+    fnTpl(pass1, { setRole: arg => { invoked = arg; return "" } })
+    assert.equal(invoked, "admin", "cross-pass data injection reaches the plugin")
+
+    // The documented mitigation: fnTpl.escape() the data for the later pass.
+    const safe = varTpl("Hi ${name}", { name: fnTpl.escape(userInput) })
+    assert.equal(safe, "Hi \\#{setRole:admin}")
+    invoked = null
+    const out = fnTpl(safe, { setRole: arg => { invoked = arg; return "" } })
+    assert.equal(out, "Hi #{setRole:admin}")
+    assert.equal(invoked, null, "escaped data must not invoke plugins")
+  })
+})
+
+describe("README: tpl.escape()", () => {
+  it("escapes a value so it survives the pass as literal text", () => {
+    const fnTpl = Tpl({ functions: true })
+    assert.equal(fnTpl.escape("#{setRole:admin}"), "\\#{setRole:admin}")
+    assert.equal(
+      fnTpl(fnTpl.escape("#{setRole:admin}") + " #{greet:Jo}", {
+        setRole: () => { throw new Error("never runs") },
+        greet: n => `hi ${n}`
+      }),
+      "#{setRole:admin} hi Jo"
+    )
+  })
+
+  it("parity applies before every start-delimiter occurrence, tag or not", () => {
+    const tpl = Tpl()
+    assert.equal(tpl("\\${not a tag", {}), "${not a tag")
+    assert.equal(tpl("\\${name}", { name: "Jane" }), "${name}")
+  })
 })
 
 describe("README: Escaping", () => {

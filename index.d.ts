@@ -29,6 +29,12 @@ declare namespace Tpl {
      * type here would reject class instances, which the engine supports.
      */
     (template: string, data: object): string
+    /**
+     * Escape a value so it survives this instance's pass as literal text -
+     * the safe way to move untrusted data across pass boundaries. See the
+     * README's "Untrusted data in multi-pass pipelines" section.
+     */
+    escape(value: unknown): string
   }
 
   /** A function-mode plugin. Receives everything after the token's first ':' as a single string argument. */
@@ -57,6 +63,12 @@ declare namespace Tpl {
      */
     (template: string, data: TplFunctions): string | Promise<string>
     (template: string, data: object): string | Promise<string>
+    /**
+     * Escape a value so it survives this instance's pass as literal text -
+     * the safe way to move untrusted data across pass boundaries. See the
+     * README's "Untrusted data in multi-pass pipelines" section.
+     */
+    escape(value: unknown): string
   }
 }
 
