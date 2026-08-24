@@ -5,7 +5,7 @@
 
 The smallest safe variable template engine with N-pass composition.
 
-No `eval`. No `new Function`. No ES6 backtick injection. Just `String.replace()` with a configurable regex — safe for userland input.
+No `eval`. No `new Function`. No ES6 backtick injection. Linear-time, no-backtracking scanning — safe for untrusted *templates*. (Untrusted *data* has its own rules; see the Security model.)
 
 ## Why this exists
 
@@ -209,8 +209,9 @@ const wrapTpl = Tpl({ start: '@{', end: '}', functions: true })  // @{}
 const frameTpl = Tpl({ start: '~(', end: ')' })                  // ~()
 
 const template = "~(before)@{wrap:#{tag:${word}}}~(after)"
-// Function arguments can contain any characters (URLs, punctuation, etc.) -
-// they just can't contain the *next* pass's own delimiters, per the rule below.
+// Each pass's argument can contain any characters (URLs, punctuation, even
+// other passes' delimiters) - the only rule (see below) is that a pass's own
+// output must not accidentally form markers a LATER pass will interpret.
 
 let result = template
 result = dataTpl(result, { word: "hello" })       // → "~(before)@{wrap:#{tag:hello}}~(after)"
@@ -240,16 +241,17 @@ This works in both modes and with any custom delimiters: `\{{name}}`,
 `\#{fn:arg}`, etc. Escapes are consumed by the pass that owns that delimiter,
 so an escaped `${` survives to render as text even when later passes run.
 
-The parity rule applies to backslashes before **every** occurrence of the
-start delimiter, whether or not what follows parses as a tag — `\${not a tag`
-renders as `${not a tag` just like `\${name}` renders as `${name}`. That
-uniformity is what makes `escape()` (below) safe without knowing context.
+The parity rule applies to backslashes before **every top-level occurrence**
+of the start delimiter, whether or not what follows parses as a tag —
+`\${not a tag` renders as `${not a tag` just like `\${name}` renders as
+`${name}`. (Inside a function argument, everything is verbatim, backslashes
+included — `#{echo:\#{x}}` passes the plugin the literal `\#{x`.)
 
 ### tpl.escape(value)
 
-Every instance carries an `escape` helper that makes a value survive that
-instance's pass as literal text — the safe way to move untrusted data across
-pass boundaries (see the Security model):
+Every instance carries an `escape` helper that neutralizes that instance's
+start delimiter inside a value, so a delimiter the value *contains* can't
+start a tag in that pass:
 
 ```js
 const fnTpl = require('nano-var-template')({ functions: true })
@@ -261,9 +263,26 @@ fnTpl(fnTpl.escape("#{setRole:admin}") + " #{greet:Jo}", {
 })                                 // → "#{setRole:admin} hi Jo"
 ```
 
-It escapes the start delimiter with correct backslash parity and doubles any
-trailing backslash run, so an escaped value can never invoke a plugin, hide a
-tag, or interfere with whatever the template puts right after it.
+`escape()` is **best-effort defense-in-depth, not a complete sandbox.** It has
+three limits, all inherent to escaping a value without seeing its context:
+
+- **It only neutralizes *complete* delimiters.** A value ending in a partial
+  delimiter fuses with adjacent text into a tag `escape()` never saw:
+  `escape("100#")` is `"100#"`, and `"100#" + "{setRole:x}"` becomes a live
+  `#{setRole:x}`. Two escaped-but-adjacent untrusted values can do this across
+  their junction.
+- **It only guards the start delimiter, not the end.** Untrusted data placed
+  *inside* a hand-authored tag's argument (`#{fn:<data>}`) can still inject a
+  closing delimiter and truncate the tag.
+- **Each pass needs its own escape**, applied in nesting order:
+  `p3.escape(p2.escape(value))` for data entering before passes 2 and 3.
+  A trailing-backslash value may also gain backslashes if it isn't immediately
+  followed by that pass's delimiter.
+
+For untrusted data, prefer the airtight approach in the Security model below
+(inject it only in the last / a non-interpreted pass); reach for `escape()`
+only when data genuinely must enter an earlier pass, and only for the
+plugin-invocation channel.
 
 ## Error handling
 
@@ -293,7 +312,9 @@ What "safe" means here, precisely:
 
 - **No code execution from templates.** No `eval`, no `new Function`, no ES6
   backtick interpolation. A template can only *reference* names; the only code
-  that ever runs is the plugin functions you registered yourself.
+  that runs is the plugin functions you registered — plus any getters on the
+  data object you pass in, which are read during lookup (a throwing getter
+  throws through, even with `warn: false`, since it's your own code).
 - **Prototype internals are unreachable.** Names that would resolve to
   `Object.prototype`'s own members — `constructor`, `__proto__`, `toString`,
   `hasOwnProperty`, etc. — resolve as *missing* in both modes, as do
@@ -333,20 +354,37 @@ const pass1 = varTpl("Hi ${name}", { name: userInput })
 // → "Hi #{setRole:admin}" — now live markup for pass 2
 ```
 
-If a pipeline mixes untrusted data with later function-mode passes, either
-run the function passes *before* the pass that injects untrusted data, or
-escape the data for each later pass before it enters the pipeline:
+**The airtight mitigation is ordering: inject untrusted data only in the last
+pass, or in a pass whose delimiters no *later* pass interprets.** Then there is
+no downstream pass to weaponize it, and no escaping is needed:
 
 ```js
-const safe = varTpl("Hi ${name}", { name: fnTpl.escape(userInput) })
-// → "Hi \\#{setRole:admin}" — pass 2 renders it as literal text
+// Resolve all function passes first, THEN drop untrusted data in a final
+// variable pass. Nothing runs after it, so it can contain anything.
+let out = fnTpl("Role: #{lookupRole:current}", { lookupRole: () => "guest" })
+out = varTpl(out + " — note: ${note}", { note: userInput })  // safe: last pass
 ```
+
+If data genuinely must enter *before* a later function-mode pass, `tpl.escape`
+is a partial defense for the plugin-invocation channel — escape once per later
+pass, in nesting order:
+
+```js
+// Untrusted data entering pass 1, ahead of function passes 2 (fnTpl) and 3 (atTpl):
+const guarded = atTpl.escape(fnTpl.escape(userInput))
+const safe = varTpl("Hi ${name}", { name: guarded })
+```
+
+Read the `tpl.escape` limits above before relying on it — it does not cover a
+value ending in a partial delimiter, nor data landing inside a tag's argument.
+When in doubt, order the passes instead.
 
 ## Options
 
 ```js
 const tpl = require('nano-var-template')({
-  start: '${',    // Opening delimiter (any string)
+  start: '${',    // Opening delimiter. Default '${' (variable mode) / '#{'
+                  //   (function mode). Use a non-empty, non-whitespace literal.
   end: '}',       // Closing delimiter (any string)
   functions: false, // true = function mode (data object contains functions, not values)
   path: '[a-zA-Z0-9_$][\\.a-zA-Z0-9_$]*', // Regex for allowed variable paths
@@ -362,7 +400,7 @@ const tpl = require('nano-var-template')({
 
 ## Design notes
 
-**Why is this package so small?** Because it's a single, well-defined operation: regex match → path lookup → replace. There's nothing to add. The power comes from composing multiple instances, not from framework complexity.
+**Why is this package so small?** Each pass is one well-defined operation: scan for this pass's markers → look up or invoke → substitute. Variable mode is a single `String.replace`; function mode is a linear `indexOf` scanner (no backtracking, so untrusted templates stay linear-time). The power comes from composing multiple instances, not from framework complexity.
 
 **Why N-pass instead of one big template engine?** Single-pass engines need to eagerly compute every possible variable upfront. N-pass composition is lazy — each pass only evaluates what the template actually uses. New functions don't bloat existing templates. Template authors compose building blocks without understanding the internals.
 

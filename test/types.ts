@@ -9,9 +9,13 @@ const customVarTpl = Tpl({ start: "{{", end: "}}", warn: false })
 const s2: string = customVarTpl("Hello {{name}}!", { name: "Jane" })
 
 // A value of the exported options type - `functions` is only known to be
-// `boolean | undefined`, so this exercises the catch-all overload.
+// `boolean | undefined`, so this exercises the catch-all overload. The union
+// must remain callable and expose escape() without narrowing (the whole point
+// of the catch-all).
 const opts: Tpl.TplOptions = { start: "<<", end: ">>" }
 const dynamicTpl: Tpl.VarTpl | Tpl.FunctionTpl = Tpl(opts)
+const dyn: string | Promise<string> = dynamicTpl("<<a>>", { a: "x" })
+const dynEsc: string = dynamicTpl.escape("<<a>>")
 
 // Class instances are valid data - prototype getters resolve at runtime,
 // so the type must not demand an index signature.
@@ -51,4 +55,4 @@ const s5 = fnTpl("#{greet:x}", new Plugins())
 const e1: string = varTpl.escape("untrusted #{x}")
 const e2: string = fnTpl.escape(42)
 
-console.log(s, s2, s3, s4, s5, result, notNarrowedToString, dynamicTpl, contextual, e1, e2)
+console.log(s, s2, s3, s4, s5, result, notNarrowedToString, dynamicTpl, contextual, e1, e2, dyn, dynEsc)

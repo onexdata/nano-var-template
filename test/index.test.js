@@ -353,6 +353,18 @@ describe("prototype-chain data", () => {
     assert.equal(quiet("${obj.toString}", { obj: {} }), "${obj.toString}")
     assert.throws(() => tpl("${constructor}", {}), /constructor.*missing/)
   })
+
+  it("blocks Function.prototype members reached via a non-function holder", () => {
+    // Object.create(fn) is a plain object that still inherits call/apply/bind
+    // from Function.prototype - it must be blocked like a real function, and
+    // must never leak the native member or throw a raw TypeError.
+    const o = Object.create(function real() {})
+    const quiet = Tpl({ warn: false })
+    const fnQuiet = Tpl({ functions: true, warn: false })
+    assert.equal(quiet("${o.call}", { o }), "${o.call}")
+    assert.equal(fnQuiet("#{o.call:x}", { o }), "#{o.call:x}")
+    assert.throws(() => tpl("${o.bind}", { o }), /'bind' missing/)
+  })
 })
 
 // ─── Malformed input safety ─────────────────────────────────────────────────
@@ -386,6 +398,16 @@ describe("malformed input safety (function mode)", () => {
     const result = quiet(bomb, { a: s => `[${s}]` })
     assert.ok(Date.now() - started < 2000, "scan should be linear, not quadratic")
     assert.ok(result.endsWith("#{a:[]"))
+  })
+
+  it("handles many name-only tags with no colon in linear time", () => {
+    // The multi-char-closer slide decision must not scan for a ':' to
+    // end-of-string on colon-less input (that was quadratic over many tags).
+    const many = Tpl({ functions: true, start: "{{", end: "}}", warn: false })
+    const bomb = "{{a}}".repeat(200000)
+    const started = Date.now()
+    many(bomb, { a: () => "x" })
+    assert.ok(Date.now() - started < 2000, "colon scan must be bounded to the token")
   })
 
   it("a missing function throws before any plugin runs - no orphaned promises", async () => {
@@ -495,6 +517,17 @@ describe("function-mode delimiters", () => {
     )
   })
 
+  it("a name-only tag does not slide into a following stray closer", () => {
+    // '{{a}}}' is the 'a' tag + a literal '}'; the slide must NOT extend the
+    // name to 'a}' (which would fail the name pattern and drop the tag).
+    // Matches variable mode, which resolves it too.
+    const fn = Tpl({ functions: true, start: "{{", end: "}}" })
+    assert.equal(fn("{{a}}}", { a: () => "A" }), "A}")
+    assert.equal(fn("{{a}}}{{b}}", { a: () => "A", b: () => "B" }), "A}B")
+    const vr = Tpl({ start: "{{", end: "}}" })
+    assert.equal(vr("{{a}}}", { a: "A" }), "A}")
+  })
+
   it("identical multi-char start/end delimiters close at the first closer - no slide", () => {
     // With start === end the slide would cross '%%%%' into the next tag's
     // opener and destroy the first tag entirely.
@@ -568,6 +601,16 @@ describe("escaping", () => {
 
   it("backslashes anywhere else are not special", () => {
     assert.equal(tpl("a\\b c\\\\d ${name}", data), "a\\b c\\\\d Jane")
+  })
+
+  it("backslash pairs collapse the same whether the name resolves or is missing", () => {
+    // The pair-collapse must not depend on whether the tag substitutes: a
+    // missing name (warn:false) renders literally but still collapses pairs.
+    const quiet = Tpl({ warn: false })
+    assert.equal(quiet("\\\\${v}", { v: "V" }), "\\V")     // present: 1 backslash + value
+    assert.equal(quiet("\\\\${x}", {}), "\\${x}")          // missing: 1 backslash + literal
+    assert.equal(quiet("\\\\\\\\${x}", {}), "\\\\${x}")    // 4 -> 2 backslashes + literal
+    assert.equal(quiet("\\\\${a.b}", { a: {} }), "\\${a.b}") // missing intermediate
   })
 
   it("escapes work in function mode - the plugin is not called", () => {
@@ -904,5 +947,36 @@ describe("error messages", () => {
       () => fnTpl("#{nope}", {}),
       err => err.message.includes("Missing function")
     )
+  })
+})
+
+// ─── Option normalization and value coercion ────────────────────────────────
+
+describe("option normalization", () => {
+  it("an explicit undefined option falls back to the default, not clobbers it", () => {
+    // Object.assign would copy the undefined over; these must behave as defaults.
+    assert.equal(Tpl({ functions: true, start: undefined })("#{a:x}", { a: s => s }), "x")
+    assert.equal(Tpl({ start: undefined })("${a}", { a: "v" }), "v")
+    // warn:undefined must remain the documented default (true = throw), not falsy
+    assert.throws(() => Tpl({ warn: undefined })("${missing}", {}), /missing/)
+  })
+})
+
+describe("value coercion", () => {
+  it("a Symbol value follows the warn contract instead of throwing raw (both modes)", () => {
+    // Implicit String coercion of a Symbol throws a raw TypeError; the engine
+    // must String() it explicitly like function mode does.
+    assert.equal(Tpl()("${s}", { s: Symbol("x") }), "Symbol(x)")
+    assert.equal(Tpl({ functions: true })("#{e:x}", { e: () => Symbol("y") }), "Symbol(y)")
+  })
+})
+
+describe("plugin invocation robustness", () => {
+  it("invokes a plugin that has its own 'call' property", () => {
+    // Own keys are data (a documented feature); fn.call(...) would break here,
+    // Reflect.apply does not.
+    const p = s => `P(${s})`
+    p.call = "not a function"
+    assert.equal(Tpl({ functions: true })("#{p:x}", { p }), "P(x)")
   })
 })

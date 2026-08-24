@@ -5,6 +5,59 @@ All notable changes to this project are documented here. Format loosely follows
 follow strict semver pre-1.0 conventions, but bumps are: patch = pure bug fix,
 minor = additive/behavior-tightening, major = a documented breaking change.
 
+## [2.4.1] - 2026-08-24
+
+A second independent multi-reviewer pass (four fresh reviews) on 2.4.0. The
+function-mode scanner was fuzzed against a reference implementation over
+550k+ inputs with zero mismatches and confirmed linear to 2M tags; the fixes
+below are the defects that pass surfaced.
+
+### Fixed
+- **Variable mode dropped backslash-pair collapse on a missing name**: with
+  `warn: false`, `\\${x}` rendered as `\\${x}` (two backslashes) when `x` was
+  absent but `\V` (one) when present - the same template yielding a different
+  backslash count depending on the data. Missing names now collapse pairs like
+  every other branch.
+- **A non-function object whose prototype is a function reached
+  `Function.prototype` members**: `${o.call}` on `Object.create(function(){})`
+  leaked the native `call`, and `#{o.call:x}` threw a raw `TypeError` even with
+  `warn: false`. The guard now blocks Function.prototype's members for anything
+  with it in the prototype chain, not just callables.
+- **A Symbol data value threw a raw `TypeError` in variable mode** (implicit
+  String coercion), breaching the `warn` contract; it now stringifies to
+  `"Symbol(x)"` like function mode.
+- **The multi-char-closer slide destroyed a name-only tag followed by a stray
+  closer**: `{{a}}}` (end `}}`) rendered literally with no error because the
+  slide extended the name to `a}`. Name-only tags (no argument) no longer
+  slide, so `{{a}}}` resolves to `A}` - matching variable mode.
+- **An explicit `undefined` option value clobbered its default** instead of
+  falling back: `Tpl({ start: undefined })` crashed and `Tpl({ warn: undefined })`
+  silently behaved as `warn: false`. Undefined now means "use the default".
+- **A plugin with its own `call` property could not be invoked** (`fn.call`
+  resolved the data property, not `Function.prototype.call`); invocation now
+  uses `Reflect.apply`.
+
+### Changed
+- **`tpl.escape()` is documented honestly as best-effort defense-in-depth**,
+  not a complete sandbox. It cannot neutralize a value ending in a *partial*
+  delimiter (which fuses with adjacent text into a live tag), does not guard
+  the end delimiter / argument channel, and must be applied once per later
+  pass. The security model now leads with the airtight mitigation - **inject
+  untrusted data only in the last / a non-interpreted pass** - and frames
+  `escape()` as the fallback for when data must enter earlier. Behavior of
+  `escape()` itself is unchanged.
+- README corrections: the "just `String.replace()`" / "~10-line function"
+  framing (function mode is a 250-line-file scanner), the escaping-parity
+  claim (verbatim inside arguments), the garbled N-pass example comment, and
+  the note that data getters execute during lookup.
+
+### Internal
+- `npm run typecheck:ts5` script (single source of truth for the TS5
+  back-compat check, previously duplicated in CI); `test/types.ts` now
+  exercises the catch-all overload's callability and `escape()`; package.json
+  metadata cleanup (author name, description, keywords). CI documents the npm
+  trusted-publishing (OIDC) migration path to retire the expiring token.
+
 ## [2.4.0] - 2026-08-23
 
 Results of an independent three-way review (architecture, adversarial

@@ -1,7 +1,7 @@
 {
   "name": "nano-var-template",
-  "version": "2.4.0",
-  "description": "The smallest and most robust *safe* variable template engine for Javascript",
+  "version": "2.4.1",
+  "description": "The smallest and most robust safe variable template engine for JavaScript",
   "type": "commonjs",
   "main": "index.js",
   "types": "index.d.ts",
@@ -24,6 +24,7 @@
   "scripts": {
     "test": "node --test test/*.test.js",
     "typecheck": "tsc --noEmit --strict --target es2020 --module commonjs test/types.ts",
+    "typecheck:ts5": "npx -y -p typescript@5 tsc --noEmit --strict --target es2020 --module commonjs test/types.ts",
     "lint": "eslint ."
   },
   "repository": {
@@ -34,20 +35,19 @@
     "template",
     "engine",
     "variable",
-    "ES6",
-    "backticks",
+    "interpolation",
+    "placeholder",
     "injection",
-    "inject",
     "vars",
     "variables",
     "functions",
+    "plugins",
     "userland",
     "safe",
     "escaping",
-    "async",
-    "strategy"
+    "async"
   ],
-  "author": "NIck Steele <njsteele@gmail.com>",
+  "author": "Nick Steele <njsteele@gmail.com>",
   "license": "MIT",
   "bugs": {
     "url": "https://github.com/onexdata/nano-var-template/issues"

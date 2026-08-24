@@ -44,8 +44,9 @@ jobs:
       - run: npm run typecheck
       # index.d.ts must stay valid for consumers on older TypeScript, not just
       # the repo's own devDependency (TS 7 accepts declaration shapes TS 5
-      # rejects, e.g. TS2309 - which shipped broken in 2.2.0).
-      - run: npx -y -p typescript@5 tsc --noEmit --strict --target es2020 --module commonjs test/types.ts
+      # rejects, e.g. TS2309 - which shipped broken in 2.2.0). Same flag list
+      # as `typecheck`, kept in the `typecheck:ts5` script so it can't drift.
+      - run: npm run typecheck:ts5
       # Coverage report in the job log
       - run: node --test --experimental-test-coverage test/*.test.js
 
@@ -90,6 +91,13 @@ jobs:
             console.log(gt)" "$LOCAL" "$PUBLISHED")
           echo "should_publish=$SHOULD" >> "$GITHUB_OUTPUT"
 
+      # Trusted publishing (OIDC) migration: this job already has
+      # `id-token: write` and publishes with `--provenance`. To drop the
+      # expiring NPM_TOKEN secret entirely, configure a Trusted Publisher for
+      # this package at npmjs.com (Package settings -> Trusted Publisher ->
+      # GitHub Actions, repo onexdata/nano-var-template, workflow ci.yml). Once
+      # that's live, npm uses OIDC automatically and the `env: NODE_AUTH_TOKEN`
+      # line below (and the secret) can be deleted.
       - name: Publish to npm
         if: steps.version-check.outputs.should_publish == 'true'
         run: npm publish --provenance --access public
