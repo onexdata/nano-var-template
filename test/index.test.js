@@ -299,6 +299,35 @@ describe("prototype-chain data", () => {
     class User {}
     assert.throws(() => tpl("${u.constructor}", { u: new User() }), /constructor.*missing/)
   })
+
+  // Function.prototype's `caller`/`arguments` are poison accessors: reading
+  // them on a modern function throws a raw engine TypeError. Template text
+  // must never be able to throw anything but this library's own errors.
+  it("blocks Function.prototype poison accessors instead of throwing a raw TypeError", () => {
+    const greet = n => `hi ${n}`
+    assert.throws(() => fnTpl("#{greet.caller:x}", { greet }), /Missing function greet\.caller/)
+    assert.throws(() => tpl("${f.arguments}", { f: greet }), /'arguments' missing/)
+    const quiet = Tpl({ functions: true, warn: false })
+    assert.equal(quiet("#{greet.caller:x}", { greet }), "#{greet.caller:x}")
+  })
+
+  it("does not resolve call/apply/bind as namespaced plugins", () => {
+    const greet = n => `hi ${n}`
+    assert.throws(() => fnTpl("#{greet.call:bob}", { greet }), /Missing function greet\.call/)
+    assert.throws(() => fnTpl("#{greet.bind:bob}", { greet }), /Missing function greet\.bind/)
+  })
+
+  it("still resolves a function's own properties and attached sub-plugins", () => {
+    const greet = n => `hi ${n}`
+    greet.formal = n => `good day, ${n}`
+    assert.equal(tpl("${f.name} ${f.length}", { f: greet }), "greet 1")
+    assert.equal(fnTpl("#{greet.formal:Jane}", { greet }), "good day, Jane")
+  })
+
+  it("plain-object keys named call/apply/caller are ordinary data", () => {
+    assert.equal(tpl("${contact.call} ${contact.caller}", { contact: { call: "555-1234", caller: "Bob" } }), "555-1234 Bob")
+    assert.equal(fnTpl("#{phone.call:x}", { phone: { call: n => `dial(${n})` } }), "dial(x)")
+  })
 })
 
 // ─── Malformed input safety ─────────────────────────────────────────────────
@@ -396,9 +425,27 @@ describe("function-mode delimiters", () => {
 
   it("a multi-char end delimiter lets arguments contain its single-char pieces", () => {
     const tpl = Tpl({ functions: true, start: "{{", end: "}}" })
+    // Assert what the plugin RECEIVES, not just the output - a truncated arg
+    // plus a re-emitted stray '}' once produced an identical-looking output.
+    let received
+    const out = tpl('{{parse:{"a":1}}}', { parse: s => { received = s; return `GOT:${s}` } })
+    assert.equal(received, '{"a":1}')
+    assert.deepEqual(JSON.parse(received), { a: 1 })
+    assert.equal(out, 'GOT:{"a":1}')
+  })
+
+  it("end-alignment picks the last overlap in longer closer runs", () => {
+    const tpl = Tpl({ functions: true, start: "[[", end: "]]" })
+    let received
+    tpl("[[echo:list[0]]]", { echo: s => { received = s; return s } })
+    assert.equal(received, "list[0]")
+  })
+
+  it("sliding never eats a following tag", () => {
+    const tpl = Tpl({ functions: true, start: "{{", end: "}}" })
     assert.equal(
-      tpl('{{parse:{"a":1}}}', { parse: s => `GOT:${s}` }),
-      'GOT:{"a":1}'
+      tpl("{{a}} {{b}}", { a: () => "A", b: () => "B" }),
+      "A B"
     )
   })
 

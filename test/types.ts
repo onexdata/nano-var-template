@@ -13,6 +13,11 @@ const s2: string = customVarTpl("Hello {{name}}!", { name: "Jane" })
 const opts: Tpl.TplOptions = { start: "<<", end: ">>" }
 const dynamicTpl: Tpl.VarTpl | Tpl.FunctionTpl = Tpl(opts)
 
+// Class instances are valid data - prototype getters resolve at runtime,
+// so the type must not demand an index signature.
+class OrmRow { get name() { return "Jane" } }
+const s3: string = varTpl("Hello ${name}!", new OrmRow())
+
 const fnTpl = Tpl({ functions: true })
 const result: string | Promise<string> = fnTpl("#{greet:Jane}", {
   greet: name => `Hi ${name}`
@@ -24,4 +29,22 @@ const result: string | Promise<string> = fnTpl("#{greet:Jane}", {
 // @ts-expect-error
 const notNarrowedToString: string = fnTpl("#{greet:Jane}", { greet: () => "x" })
 
-console.log(s, s2, result, notNarrowedToString, dynamicTpl)
+// Plugin lambdas in object literals get contextual typing (no implicit any) -
+// `name` must infer as `string | undefined` under --strict.
+const contextual = fnTpl("#{shout:hi}", {
+  shout: name => (name ?? "").toUpperCase()
+})
+
+// Namespaced plugins: nested plugin objects are valid function-mode data,
+// and the TplFunctions shape checks them when annotated explicitly.
+const namespaced: Tpl.TplFunctions = {
+  format: { date: s => `DATE(${s})` },
+  greet: n => `hi ${n}`
+}
+const s4 = fnTpl("#{format.date:2026}", namespaced)
+
+// Class-based plugin registries (methods on the prototype) are valid too.
+class Plugins { greet(n: string | undefined) { return `hi ${n}` } }
+const s5 = fnTpl("#{greet:x}", new Plugins())
+
+console.log(s, s2, s3, s4, s5, result, notNarrowedToString, dynamicTpl, contextual)

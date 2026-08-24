@@ -23,19 +23,40 @@ declare namespace Tpl {
   }
 
   interface VarTpl {
-    (template: string, data: Record<string, unknown>): string
+    /**
+     * `data` is any object - plain literals, class instances (prototype
+     * getters resolve), or Object.create() layering. A stricter index-signature
+     * type here would reject class instances, which the engine supports.
+     */
+    (template: string, data: object): string
   }
 
   /** A function-mode plugin. Receives everything after the token's first ':' as a single string argument. */
   type TplFunction = (arg: string | undefined) => unknown
+
+  /**
+   * Optional convenience shape for a plugin object: functions, arbitrarily
+   * nested under namespaces (`#{format.date:...}`). Annotate your own plugin
+   * object with this for checking; the engine accepts any object (class
+   * instances with prototype methods work too).
+   */
+  interface TplFunctions {
+    [name: string]: TplFunction | TplFunctions
+  }
 
   interface FunctionTpl {
     /**
      * Returns a plain string when every invoked plugin resolved synchronously.
      * Returns a Promise<string> instead as soon as any invoked plugin returns
      * a thenable - see the "Async functions" section of the README.
+     *
+     * Two overloads: the TplFunctions one gives object literals contextual
+     * typing (plugin lambda params infer as `string | undefined`); the object
+     * one accepts class-based plugin registries, whose methods live on the
+     * prototype and can't satisfy an index signature.
      */
-    (template: string, data: Record<string, TplFunction>): string | Promise<string>
+    (template: string, data: TplFunctions): string | Promise<string>
+    (template: string, data: object): string | Promise<string>
   }
 }
 

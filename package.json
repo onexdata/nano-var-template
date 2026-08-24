@@ -1,6 +1,6 @@
 {
   "name": "nano-var-template",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "description": "The smallest and most robust *safe* variable template engine for Javascript",
   "type": "commonjs",
   "main": "index.js",
@@ -43,8 +43,8 @@
     "functions",
     "userland",
     "safe",
-    "scrubbed",
-    "XSS",
+    "escaping",
+    "async",
     "strategy"
   ],
   "author": "NIck Steele <njsteele@gmail.com>",

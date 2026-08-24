@@ -5,6 +5,36 @@ All notable changes to this project are documented here. Format loosely follows
 follow strict semver pre-1.0 conventions, but bumps are: patch = pure bug fix,
 minor = additive/behavior-tightening, major = a documented breaking change.
 
+## [2.3.1] - 2026-08-23
+
+### Fixed
+- **Template text could throw a raw engine `TypeError` through the `warn`
+  contract**: `${f.caller}` / `#{fn.arguments:...}` on a function value hit
+  `Function.prototype`'s poison accessors, crashing even with `warn: false`.
+  Relatedly, `#{fn.call:x}` resolved `Function.prototype.call` as a
+  "namespaced plugin" and silently invoked the plugin with no argument. When
+  the holder is a function, names resolving to `Function.prototype`'s own
+  members are now treated as missing - a function's own properties (`name`,
+  `length`, attached sub-plugins) and plain-object keys named `call`/`caller`
+  are unaffected.
+- **Multi-char closers truncated arguments in overlapping runs**: with end
+  `}}`, the template `{{parse:{"a":1}}}` matched the first `}}` alignment,
+  silently passing the plugin `{"a":1` (broken JSON) while the re-emitted
+  stray `}` made the *output* look correct. End-matching now slides to the
+  last overlapping alignment, so the argument keeps its closing characters.
+  (Single-char closers are unchanged - `%fn:a%%b%` still closes at the first
+  `%`.) Tests now assert what plugins receive, not just template output.
+- **The type definitions rejected two documented runtime features**: class
+  instances as data (`Record<string, unknown>` demands an index signature that
+  classes never have) and namespaced plugin objects
+  (`Record<string, TplFunction>` forbade nesting). Variable-mode data is now
+  typed `object`; function-mode data is an overload pair - a `TplFunctions`
+  bag (exported; keeps contextual typing so plugin-lambda params infer as
+  `string | undefined`) plus an `object` fallback for class-based registries.
+- npm keywords no longer claim `XSS`/`scrubbed` - the engine intentionally
+  does no HTML escaping (see the README "Security model" section); added
+  `escaping`/`async` for the features it actually has.
+
 ## [2.3.0] - 2026-08-12
 
 ### Added

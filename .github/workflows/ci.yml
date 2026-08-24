@@ -14,6 +14,8 @@ concurrency:
 
 jobs:
   # Runtime compatibility: the engine itself on every supported Node.
+  # No npm ci: the engine and its tests use only node built-ins, so
+  # installing devDependencies here (eslint, typescript) is pure waste.
   test:
     runs-on: ubuntu-latest
     strategy:
@@ -24,8 +26,6 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node-version }}
-          cache: npm
-      - run: npm ci
       - run: npm test
 
   # Node-version-independent checks, run once on current LTS. Kept separate

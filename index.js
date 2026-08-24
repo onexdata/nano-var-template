@@ -1,9 +1,24 @@
 const escapeRegex = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 
+const own = Object.prototype.hasOwnProperty
+
 // Object.prototype's own member names (constructor, __proto__, toString, ...)
 // are never treated as data, in either mode. Everything else on a prototype
 // chain - class getters, methods, Object.create() layering - resolves normally.
-const banned = key => Object.prototype.hasOwnProperty.call(Object.prototype, key)
+const banned = key => own.call(Object.prototype, key)
+
+// When the holder is a function, Function.prototype's own member names are
+// blocked the same way: reading `caller`/`arguments` throws an engine
+// TypeError (poison accessors) straight through the warn contract, and
+// call/apply/bind are not plugins. A function's OWN properties (name, length,
+// attached sub-plugins) and anything inherited from user code still resolve.
+const fnBanned = (x, key) =>
+  typeof x === "function" && own.call(Function.prototype, key) && !own.call(x, key)
+
+// The one lookup guard both modes share - this predicate IS the prototype
+// defense, so it exists exactly once. Object(x) boxes primitives so `in`
+// never throws; x == null is checked first because Object(null) would lie.
+const hasKey = (x, key) => x != null && !banned(key) && !fnBanned(x, key) && key in Object(x)
 
 const Tpl = options => {
   // You can pass options to overide defaults...
@@ -45,9 +60,7 @@ const Tpl = options => {
           len = path.length
         let lookup = data
         for (let i = 0; i < len; i++) {
-          // Object(lookup) boxes primitives so `in` never throws; lookup == null
-          // is checked first because Object(null) would "work" and lie.
-          if (lookup == null || banned(path[i]) || !(path[i] in Object(lookup))) {
+          if (!hasKey(lookup, path[i])) {
             if (options.warn) throw new Error(`nano-var-template: '${path[i]}' missing in ${tag}`)
             return tag
           }
@@ -101,6 +114,15 @@ const Tpl = options => {
       const from = s + startD.length
       if (end < from) end = template.indexOf(endD, from)
       if (end === -1) break
+      // Multi-char closers: in a run like '}}}' with end '}}', the FIRST
+      // alignment would steal the argument's final '}' ('{{parse:{"a":1}}}'
+      // silently truncating the arg to '{"a":1'). Slide to the LAST
+      // overlapping alignment so the argument keeps its closing characters.
+      // (Never for single-char closers - '%fn:a%%b%' must close at the first
+      // '%', or the slide would eat the next tag's opener.)
+      if (endD.length > 1) {
+        while (template.startsWith(endD, end + 1)) end++
+      }
       // An unescaped opener before this tag closes means this opener is not a
       // tag (unclosed, or nested like "#{a:x #{b:y} z"). Emit it as literal
       // text and rescan from the inner opener, which may be a real tag.
@@ -138,7 +160,7 @@ const Tpl = options => {
       let parent = null,
         fn = data
       for (let i = 0; i < seg.length; i++) {
-        if (fn == null || banned(seg[i]) || !(seg[i] in Object(fn))) return null
+        if (!hasKey(fn, seg[i])) return null
         parent = fn
         fn = fn[seg[i]]
       }
